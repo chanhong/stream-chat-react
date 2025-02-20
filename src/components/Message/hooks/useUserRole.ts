@@ -1,67 +1,69 @@
-import { StreamMessage, useChannelStateContext } from '../../../context/ChannelStateContext';
+import {
+  StreamMessage,
+  useChannelStateContext,
+} from '../../../context/ChannelStateContext';
 import { useChatContext } from '../../../context/ChatContext';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../../types/types';
+import type { DefaultStreamChatGenerics } from '../../../types/types';
 
 export const useUserRole = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  message: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>,
+  message: StreamMessage<StreamChatGenerics>,
   onlySenderCanEdit?: boolean,
   disableQuotedMessages?: boolean,
 ) => {
-  const { channel, channelCapabilities = {}, channelConfig } = useChannelStateContext<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >('useUserRole');
-  const { client } = useChatContext<At, Ch, Co, Ev, Me, Re, Us>('useUserRole');
+  const { channel, channelCapabilities = {} } =
+    useChannelStateContext<StreamChatGenerics>('useUserRole');
+  const { client } = useChatContext<StreamChatGenerics>('useUserRole');
 
-  const isAdmin = client.user?.role === 'admin' || channel.state.membership.role === 'admin';
-  const isMyMessage = client.userID === message.user?.id;
+  /**
+   * @deprecated as it relies on `membership.role` check which is already deprecated and shouldn't be used anymore.
+   * `isAdmin` will be removed in future release. See `channelCapabilities`.
+   */
+  const isAdmin =
+    client.user?.role === 'admin' || channel.state.membership.role === 'admin';
+
+  /**
+   * @deprecated as it relies on `membership.role` check which is already deprecated and shouldn't be used anymore.
+   * `isOwner` will be removed in future release. See `channelCapabilities`.
+   */
   const isOwner = channel.state.membership.role === 'owner';
 
+  /**
+   * @deprecated as it relies on `membership.role` check which is already deprecated and shouldn't be used anymore.
+   * `isModerator` will be removed in future release. See `channelCapabilities`.
+   */
   const isModerator =
     client.user?.role === 'channel_moderator' ||
     channel.state.membership.role === 'channel_moderator' ||
-    channel.state.membership.role === 'moderator';
+    channel.state.membership.role === 'moderator' ||
+    channel.state.membership.is_moderator === true ||
+    channel.state.membership.channel_role === 'channel_moderator';
+
+  const isMyMessage = client.userID === message.user?.id;
 
   const canEdit =
-    (!onlySenderCanEdit && channelCapabilities['update-any-message']) ||
-    (isMyMessage && channelCapabilities['update-own-message']);
+    !message.poll &&
+    ((!onlySenderCanEdit && channelCapabilities['update-any-message']) ||
+      (isMyMessage && channelCapabilities['update-own-message']));
 
   const canDelete =
     channelCapabilities['delete-any-message'] ||
     (isMyMessage && channelCapabilities['delete-own-message']);
 
-  const canFlag = !isMyMessage;
-  const canMute = !isMyMessage && channelConfig?.mutes;
-  const canQuote = !disableQuotedMessages;
-  const canReact = channelConfig?.reactions !== false && channelCapabilities['send-reaction'];
-  const canReply = channelConfig?.replies !== false && channelCapabilities['send-reply'];
+  const canFlag = !isMyMessage && channelCapabilities['flag-message'];
+  const canMarkUnread = channelCapabilities['read-events'];
+  const canMute = !isMyMessage && channelCapabilities['mute-channel'];
+  const canQuote = !disableQuotedMessages && channelCapabilities['quote-message'];
+  const canReact = channelCapabilities['send-reaction'];
+  const canReply = channelCapabilities['send-reply'];
 
   return {
     canDelete,
     canEdit,
     canFlag,
+    canMarkUnread,
     canMute,
     canQuote,
     canReact,

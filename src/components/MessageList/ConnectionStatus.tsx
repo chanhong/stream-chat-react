@@ -4,26 +4,12 @@ import type { Event } from 'stream-chat';
 
 import { CustomNotification } from './CustomNotification';
 import { useChatContext, useTranslationContext } from '../../context';
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
-const UnMemoizedConnectionStatus: React.FC = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+const UnMemoizedConnectionStatus = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >() => {
-  const { client } = useChatContext<At, Ch, Co, Ev, Me, Re, Us>('ConnectionStatus');
+  const { client } = useChatContext<StreamChatGenerics>('ConnectionStatus');
   const { t } = useTranslationContext('ConnectionStatus');
 
   const [online, setOnline] = useState(true);
@@ -31,7 +17,7 @@ const UnMemoizedConnectionStatus: React.FC = <
   useEffect(() => {
     const connectionChanged = ({
       online: onlineStatus = false,
-    }: Event<At, Ch, Co, Ev, Me, Re, Us>) => {
+    }: Event<StreamChatGenerics>) => {
       if (online !== onlineStatus) {
         setOnline(onlineStatus);
       }
@@ -42,12 +28,14 @@ const UnMemoizedConnectionStatus: React.FC = <
   }, [client, online]);
 
   return (
-    <CustomNotification active={!online} type='error'>
-      {t('Connection failure, reconnecting now...')}
+    <CustomNotification
+      active={!online}
+      className='str-chat__connection-status-notification'
+      type='error'
+    >
+      {t<string>('Connection failure, reconnecting now...')}
     </CustomNotification>
   );
 };
 
-export const ConnectionStatus = React.memo(
-  UnMemoizedConnectionStatus,
-) as typeof UnMemoizedConnectionStatus;
+export const ConnectionStatus = React.memo(UnMemoizedConnectionStatus);

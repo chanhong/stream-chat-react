@@ -1,5 +1,5 @@
 import React, { useContext } from 'react';
-import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 import { Chat } from '..';
@@ -11,8 +11,6 @@ import {
   getTestClient,
   getTestClientWithUser,
 } from '../../../mock-builders';
-
-import { version } from '../../../../package.json';
 
 const ChatContextConsumer = ({ fn }) => {
   fn(useContext(ChatContext));
@@ -30,26 +28,30 @@ describe('Chat', () => {
   const originalUserAgent = chatClient.getUserAgent();
 
   it('should render children without crashing', async () => {
-    const { getByTestId } = render(
-      <Chat client={chatClient}>
-        <div data-testid='children' />
-      </Chat>,
-    );
+    await act(() => {
+      render(
+        <Chat client={chatClient}>
+          <div data-testid='children' />
+        </Chat>,
+      );
+    });
 
-    await waitFor(() => expect(getByTestId('children')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('children')).toBeInTheDocument());
   });
 
   it('should expose the context', async () => {
     let context;
-    render(
-      <Chat client={chatClient}>
-        <ChatContextConsumer
-          fn={(ctx) => {
-            context = ctx;
-          }}
-        ></ChatContextConsumer>
-      </Chat>,
-    );
+    await act(() => {
+      render(
+        <Chat client={chatClient}>
+          <ChatContextConsumer
+            fn={(ctx) => {
+              context = ctx;
+            }}
+          />
+        </Chat>,
+      );
+    });
 
     await waitFor(() => {
       expect(context).toBeInstanceOf(Object);
@@ -62,7 +64,7 @@ describe('Chat', () => {
       expect(context.openMobileNav).toBeInstanceOf(Function);
       expect(context.closeMobileNav).toBeInstanceOf(Function);
       expect(context.client.getUserAgent()).toBe(
-        `stream-chat-react-${version}-${originalUserAgent}`,
+        `stream-chat-react-__STREAM_CHAT_REACT_VERSION__-${originalUserAgent}`,
       );
     });
   });
@@ -76,7 +78,7 @@ describe('Chat', () => {
           fn={(ctx) => {
             context = ctx;
           }}
-        ></ChatContextConsumer>
+        />
       </Chat>,
     );
     await waitFor(() => {
@@ -92,7 +94,7 @@ describe('Chat', () => {
           fn={(ctx) => {
             context = ctx;
           }}
-        ></ChatContextConsumer>
+        />
       </Chat>,
     );
     await waitFor(() => {
@@ -104,15 +106,17 @@ describe('Chat', () => {
   describe('mobile nav', () => {
     it('initialNavOpen prop should set navOpen', async () => {
       let context;
-      render(
-        <Chat client={chatClient} initialNavOpen={false}>
-          <ChatContextConsumer
-            fn={(ctx) => {
-              context = ctx;
-            }}
-          ></ChatContextConsumer>
-        </Chat>,
-      );
+      await act(() => {
+        render(
+          <Chat client={chatClient} initialNavOpen={false}>
+            <ChatContextConsumer
+              fn={(ctx) => {
+                context = ctx;
+              }}
+            />
+          </Chat>,
+        );
+      });
 
       await waitFor(() => expect(context.navOpen).toBe(false));
     });
@@ -125,7 +129,7 @@ describe('Chat', () => {
             fn={(ctx) => {
               context = ctx;
             }}
-          ></ChatContextConsumer>
+          />
         </Chat>,
       );
       await waitFor(() => expect(context.navOpen).toBe(false));
@@ -136,7 +140,7 @@ describe('Chat', () => {
             fn={(ctx) => {
               context = ctx;
             }}
-          ></ChatContextConsumer>
+          />
         </Chat>,
       );
       await waitFor(() => expect(context.navOpen).toBe(false));
@@ -150,7 +154,7 @@ describe('Chat', () => {
             fn={(ctx) => {
               context = ctx;
             }}
-          ></ChatContextConsumer>
+          />
         </Chat>,
       );
 
@@ -172,7 +176,7 @@ describe('Chat', () => {
             fn={(ctx) => {
               context = ctx;
             }}
-          ></ChatContextConsumer>
+          />
         </Chat>,
       );
 
@@ -200,14 +204,14 @@ describe('Chat', () => {
       // Chat client loads mutes information
       const mutes = ['user_y', 'user_z'];
       chatClientWithUser.user.mutes = mutes;
-      act(() => {
+      await act(() => {
         rerender(
           <Chat client={chatClientWithUser}>
             <ChatContextConsumer
               fn={(ctx) => {
                 context = ctx;
               }}
-            ></ChatContextConsumer>
+            />
           </Chat>,
         );
       });
@@ -224,7 +228,7 @@ describe('Chat', () => {
             fn={(ctx) => {
               context = ctx;
             }}
-          ></ChatContextConsumer>
+          />
         </Chat>,
       );
       await waitFor(() => expect(context.mutes).toStrictEqual([]));
@@ -247,7 +251,7 @@ describe('Chat', () => {
             fn={(ctx) => {
               context = ctx;
             }}
-          ></ChatContextConsumer>
+          />
         </Chat>,
       );
 
@@ -270,7 +274,7 @@ describe('Chat', () => {
             fn={(ctx) => {
               context = ctx;
             }}
-          ></ChatContextConsumer>
+          />
         </Chat>,
       );
 
@@ -285,15 +289,17 @@ describe('Chat', () => {
   describe('translation context', () => {
     it('should expose the context', async () => {
       let context;
-      render(
-        <Chat client={chatClient}>
-          <TranslationContextConsumer
-            fn={(ctx) => {
-              context = ctx;
-            }}
-          ></TranslationContextConsumer>
-        </Chat>,
-      );
+      await act(() => {
+        render(
+          <Chat client={chatClient}>
+            <TranslationContextConsumer
+              fn={(ctx) => {
+                context = ctx;
+              }}
+            />
+          </Chat>,
+        );
+      });
 
       await waitFor(() => {
         expect(context).toBeInstanceOf(Object);
@@ -315,7 +321,7 @@ describe('Chat', () => {
             fn={(ctx) => {
               context = ctx;
             }}
-          ></TranslationContextConsumer>
+          />
         </Chat>,
       );
 
@@ -338,7 +344,7 @@ describe('Chat', () => {
             fn={(ctx) => {
               context = ctx;
             }}
-          ></TranslationContextConsumer>
+          />
         </Chat>,
       );
 
@@ -358,7 +364,7 @@ describe('Chat', () => {
             fn={(ctx) => {
               context = ctx;
             }}
-          ></TranslationContextConsumer>
+          />
         </Chat>,
       );
       await waitFor(() => {

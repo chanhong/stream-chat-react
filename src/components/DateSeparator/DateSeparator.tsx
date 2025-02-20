@@ -1,8 +1,11 @@
 import React from 'react';
 
-import { isDayOrMoment, useTranslationContext } from '../../context/TranslationContext';
+import { useTranslationContext } from '../../context/TranslationContext';
+import { getDateString } from '../../i18n/utils';
 
-export type DateSeparatorProps = {
+import type { TimestampFormatterOptions } from '../../i18n/types';
+
+export type DateSeparatorProps = TimestampFormatterOptions & {
   /** The date to format */
   date: Date;
   /** Override the default formatting of the date. This is a function that has access to the original date object. */
@@ -14,22 +17,29 @@ export type DateSeparatorProps = {
 };
 
 const UnMemoizedDateSeparator = (props: DateSeparatorProps) => {
-  const { date, formatDate, position = 'right', unread } = props;
+  const {
+    calendar,
+    date: messageCreatedAt,
+    formatDate,
+    position = 'right',
+    unread,
+    ...restTimestampFormatterOptions
+  } = props;
 
   const { t, tDateTimeParser } = useTranslationContext('DateSeparator');
 
-  if (typeof date === 'string') return null;
-
-  const parsedDate = tDateTimeParser(date.toISOString());
-
-  const formattedDate = formatDate
-    ? formatDate(date)
-    : isDayOrMoment(parsedDate)
-    ? parsedDate.calendar()
-    : parsedDate;
+  const formattedDate = getDateString({
+    calendar,
+    ...restTimestampFormatterOptions,
+    formatDate,
+    messageCreatedAt,
+    t,
+    tDateTimeParser,
+    timestampTranslationKey: 'timestamp/DateSeparator',
+  });
 
   return (
-    <div className='str-chat__date-separator'>
+    <div className='str-chat__date-separator' data-testid='date-separator'>
       {(position === 'right' || position === 'center') && (
         <hr className='str-chat__date-separator-line' />
       )}
@@ -46,4 +56,6 @@ const UnMemoizedDateSeparator = (props: DateSeparatorProps) => {
 /**
  * A simple date separator between messages.
  */
-export const DateSeparator = React.memo(UnMemoizedDateSeparator) as typeof UnMemoizedDateSeparator;
+export const DateSeparator = React.memo(
+  UnMemoizedDateSeparator,
+) as typeof UnMemoizedDateSeparator;

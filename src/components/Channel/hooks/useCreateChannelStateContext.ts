@@ -1,29 +1,15 @@
 import { useMemo } from 'react';
 
-import { isDate, isDayOrMoment } from '../../../context/TranslationContext';
+import { isDate, isDayOrMoment } from '../../../i18n';
 
 import type { ChannelStateContextValue } from '../../../context/ChannelStateContext';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../../types/types';
+import type { DefaultStreamChatGenerics } from '../../../types/types';
 
 export const useCreateChannelStateContext = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  value: Omit<ChannelStateContextValue<At, Ch, Co, Ev, Me, Re, Us>, 'channelCapabilities'> & {
+  value: Omit<ChannelStateContextValue<StreamChatGenerics>, 'channelCapabilities'> & {
     channelCapabilitiesArray: string[];
     skipMessageDataMemoization?: boolean;
   },
@@ -33,8 +19,17 @@ export const useCreateChannelStateContext = <
     channel,
     channelCapabilitiesArray = [],
     channelConfig,
+    channelUnreadUiState,
+    debounceURLEnrichmentMs,
+    dragAndDropWindow,
+    enrichURLForPreview,
     error,
+    findURLFn,
+    giphyVersion,
     hasMore,
+    hasMoreNewer,
+    highlightedMessageId,
+    imageAttachmentSizeHandler,
     loading,
     loadingMore,
     maxNumberOfFiles,
@@ -43,16 +38,20 @@ export const useCreateChannelStateContext = <
     multipleUploads,
     mutes,
     notifications,
+    onLinkPreviewDismissed,
     pinnedMessages,
     quotedMessage,
     read = {},
+    shouldGenerateVideoThumbnail,
     skipMessageDataMemoization,
+    suppressAutoscroll,
     thread,
     threadHasMore,
     threadLoadingMore,
     threadMessages = [],
-    watcherCount,
+    videoAttachmentSizeHandler,
     watcher_count,
+    watcherCount,
     watchers,
   } = value;
 
@@ -62,7 +61,9 @@ export const useCreateChannelStateContext = <
   const notificationsLength = notifications.length;
   const readUsers = Object.values(read);
   const readUsersLength = readUsers.length;
-  const readUsersLastReads = readUsers.map(({ last_read }) => last_read.toISOString()).join();
+  const readUsersLastReads = readUsers
+    .map(({ last_read }) => last_read.toISOString())
+    .join();
   const threadMessagesLength = threadMessages?.length;
 
   const channelCapabilities: Record<string, boolean> = {};
@@ -75,14 +76,22 @@ export const useCreateChannelStateContext = <
     ? messages
     : messages
         .map(
-          ({ deleted_at, latest_reactions, pinned, reply_count, status, updated_at, user }) =>
+          ({
+            deleted_at,
+            latest_reactions,
+            pinned,
+            reply_count,
+            status,
+            updated_at,
+            user,
+          }) =>
             `${deleted_at}${
               latest_reactions ? latest_reactions.map(({ type }) => type).join() : ''
             }${pinned}${reply_count}${status}${
               updated_at && (isDayOrMoment(updated_at) || isDate(updated_at))
                 ? updated_at.toISOString()
                 : updated_at || ''
-            }${user?.image}${user?.name}`,
+            }${user?.updated_at}`,
         )
         .join();
 
@@ -95,18 +104,27 @@ export const useCreateChannelStateContext = <
           updated_at && (isDayOrMoment(updated_at) || isDate(updated_at))
             ? updated_at.toISOString()
             : updated_at || ''
-        }${user?.image}${user?.name}`,
+        }${user?.updated_at}`,
     )
     .join();
 
-  const channelStateContext: ChannelStateContextValue<At, Ch, Co, Ev, Me, Re, Us> = useMemo(
+  const channelStateContext: ChannelStateContextValue<StreamChatGenerics> = useMemo(
     () => ({
       acceptedFiles,
       channel,
       channelCapabilities,
       channelConfig,
+      channelUnreadUiState,
+      debounceURLEnrichmentMs,
+      dragAndDropWindow,
+      enrichURLForPreview,
       error,
+      findURLFn,
+      giphyVersion,
       hasMore,
+      hasMoreNewer,
+      highlightedMessageId,
+      imageAttachmentSizeHandler,
       loading,
       loadingMore,
       maxNumberOfFiles,
@@ -115,21 +133,33 @@ export const useCreateChannelStateContext = <
       multipleUploads,
       mutes,
       notifications,
+      onLinkPreviewDismissed,
       pinnedMessages,
       quotedMessage,
       read,
+      shouldGenerateVideoThumbnail,
+      suppressAutoscroll,
       thread,
       threadHasMore,
       threadLoadingMore,
       threadMessages,
+      videoAttachmentSizeHandler,
       watcher_count,
       watcherCount,
       watchers,
     }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
+      channel.data?.name, // otherwise ChannelHeader will not be updated
       channelId,
+      channelUnreadUiState,
+      debounceURLEnrichmentMs,
+      enrichURLForPreview,
       error,
+      findURLFn,
       hasMore,
+      hasMoreNewer,
+      highlightedMessageId,
       lastRead,
       loading,
       loadingMore,
@@ -137,10 +167,13 @@ export const useCreateChannelStateContext = <
       memoizedMessageData,
       memoizedThreadMessageData,
       notificationsLength,
+      onLinkPreviewDismissed,
       quotedMessage,
       readUsersLength,
       readUsersLastReads,
+      shouldGenerateVideoThumbnail,
       skipMessageDataMemoization,
+      suppressAutoscroll,
       thread,
       threadHasMore,
       threadLoadingMore,

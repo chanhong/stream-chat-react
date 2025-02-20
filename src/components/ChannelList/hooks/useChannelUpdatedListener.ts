@@ -4,42 +4,37 @@ import { useChatContext } from '../../../context/ChatContext';
 
 import type { Channel, Event } from 'stream-chat';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../../types/types';
+import type { DefaultStreamChatGenerics } from '../../../types/types';
 
 export const useChannelUpdatedListener = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  setChannels: React.Dispatch<React.SetStateAction<Array<Channel<At, Ch, Co, Ev, Me, Re, Us>>>>,
+  setChannels: React.Dispatch<React.SetStateAction<Array<Channel<StreamChatGenerics>>>>,
   customHandler?: (
-    setChannels: React.Dispatch<React.SetStateAction<Array<Channel<At, Ch, Co, Ev, Me, Re, Us>>>>,
-    event: Event<At, Ch, Co, Ev, Me, Re, Us>,
+    setChannels: React.Dispatch<React.SetStateAction<Array<Channel<StreamChatGenerics>>>>,
+    event: Event<StreamChatGenerics>,
   ) => void,
   forceUpdate?: () => void,
 ) => {
-  const { client } = useChatContext<At, Ch, Co, Ev, Me, Re, Us>('useChannelUpdatedListener');
+  const { client } = useChatContext<StreamChatGenerics>('useChannelUpdatedListener');
 
   useEffect(() => {
-    const handleEvent = (event: Event<At, Ch, Co, Ev, Me, Re, Us>) => {
+    const handleEvent = (event: Event<StreamChatGenerics>) => {
       setChannels((channels) => {
-        const channelIndex = channels.findIndex((channel) => channel.cid === event.channel?.cid);
+        const channelIndex = channels.findIndex(
+          (channel) => channel.cid === event.channel?.cid,
+        );
 
         if (channelIndex > -1 && event.channel) {
           const newChannels = channels;
-          newChannels[channelIndex].data = event.channel;
+          newChannels[channelIndex].data = {
+            ...event.channel,
+            hidden: event.channel?.hidden ?? newChannels[channelIndex].data?.hidden,
+            own_capabilities:
+              event.channel?.own_capabilities ??
+              newChannels[channelIndex].data?.own_capabilities,
+          };
+
           return [...newChannels];
         }
 
@@ -58,5 +53,5 @@ export const useChannelUpdatedListener = <
     return () => {
       client.off('channel.updated', handleEvent);
     };
-  }, [customHandler]);
+  }, [client, customHandler, forceUpdate, setChannels]);
 };

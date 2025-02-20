@@ -1,61 +1,57 @@
 import React from 'react';
-
-import { AvatarProps, Avatar as DefaultAvatar } from '../Avatar';
+import clsx from 'clsx';
 
 import { useChannelStateContext } from '../../context/ChannelStateContext';
 import { useChatContext } from '../../context/ChatContext';
-import { useComponentContext } from '../../context/ComponentContext';
 import { useTypingContext } from '../../context/TypingContext';
+import { useTranslationContext } from '../../context/TranslationContext';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
-export type TypingIndicatorProps<Us extends DefaultUserType<Us> = DefaultUserType> = {
-  /** Custom UI component to display user avatar, defaults to and accepts same props as: [Avatar](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Avatar/Avatar.tsx) */
-  Avatar?: React.ComponentType<AvatarProps<Us>>;
-  /** Avatar size in pixels, @default 32px */
-  avatarSize?: number;
-  /** Whether or not the typing indicator is in a thread */
+export type TypingIndicatorProps = {
+  /** Whether the typing indicator is in a thread */
   threadList?: boolean;
+};
+
+const useJoinTypingUsers = (names: string[]) => {
+  const { t } = useTranslationContext();
+
+  if (!names.length) return null;
+
+  const [name, ...rest] = names;
+
+  if (names.length === 1)
+    return t('{{ user }} is typing...', {
+      user: name,
+    });
+
+  const MAX_JOINED_USERS = 3;
+
+  if (names.length > MAX_JOINED_USERS)
+    return t('{{ users }} and more are typing...', {
+      users: names.slice(0, MAX_JOINED_USERS).join(', ').trim(),
+    });
+
+  return t('{{ users }} and {{ user }} are typing...', {
+    user: name,
+    users: rest.join(', ').trim(),
+  });
 };
 
 /**
  * TypingIndicator lists users currently typing, it needs to be a child of Channel component
  */
 const UnMemoizedTypingIndicator = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: TypingIndicatorProps<Us>,
+  props: TypingIndicatorProps,
 ) => {
-  const { Avatar: PropAvatar, avatarSize = 32, threadList } = props;
+  const { threadList } = props;
 
-  const { channelConfig, thread } = useChannelStateContext<At, Ch, Co, Ev, Me, Re, Us>(
-    'TypingIndicator',
-  );
-  const { client } = useChatContext<At, Ch, Co, Ev, Me, Re, Us>('TypingIndicator');
-  const { Avatar: ContextAvatar } = useComponentContext<At, Ch, Co, Ev, Me, Re, Us>(
-    'TypingIndicator',
-  );
-  const { typing = {} } = useTypingContext<At, Ch, Co, Ev, Me, Re, Us>('TypingIndicator');
-
-  const Avatar = PropAvatar || ContextAvatar || DefaultAvatar;
-
-  if (channelConfig?.typing_events === false) {
-    return null;
-  }
+  const { channelConfig, thread } =
+    useChannelStateContext<StreamChatGenerics>('TypingIndicator');
+  const { client } = useChatContext<StreamChatGenerics>('TypingIndicator');
+  const { typing = {} } = useTypingContext<StreamChatGenerics>('TypingIndicator');
 
   const typingInChannel = !threadList
     ? Object.values(typing).filter(
@@ -69,29 +65,34 @@ const UnMemoizedTypingIndicator = <
       )
     : [];
 
+  const typingUserList = (threadList ? typingInThread : typingInChannel)
+    .map(({ user }) => user?.name || user?.id)
+    .filter(Boolean) as string[];
+
+  const joinedTypingUsers = useJoinTypingUsers(typingUserList);
+
+  const isTypingActive =
+    (threadList && typingInThread.length) || (!threadList && typingInChannel.length);
+
+  if (channelConfig?.typing_events === false) {
+    return null;
+  }
+
+  if (!isTypingActive) return null;
   return (
     <div
-      className={`str-chat__typing-indicator ${
-        (threadList && typingInThread.length) || (!threadList && typingInChannel.length)
-          ? 'str-chat__typing-indicator--typing'
-          : ''
-      }`}
+      className={clsx('str-chat__typing-indicator', {
+        'str-chat__typing-indicator--typing': isTypingActive,
+      })}
+      data-testid='typing-indicator'
     >
-      <div className='str-chat__typing-indicator__avatars'>
-        {(threadList ? typingInThread : typingInChannel).map(({ user }, i) => (
-          <Avatar
-            image={user?.image}
-            key={`${user?.id}-${i}`}
-            name={user?.name || user?.id}
-            size={avatarSize}
-            user={user}
-          />
-        ))}
-      </div>
       <div className='str-chat__typing-indicator__dots'>
-        <span className='str-chat__typing-indicator__dot' />
-        <span className='str-chat__typing-indicator__dot' />
-        <span className='str-chat__typing-indicator__dot' />
+        <span className='str-chat__typing-indicator__dot'></span>
+        <span className='str-chat__typing-indicator__dot'></span>
+        <span className='str-chat__typing-indicator__dot'></span>
+      </div>
+      <div className='str-chat__typing-indicator__users' data-testid='typing-users'>
+        {joinedTypingUsers}
       </div>
     </div>
   );

@@ -14,21 +14,13 @@ import { useChatContext } from '../../context/ChatContext';
 import { useComponentContext } from '../../context/ComponentContext';
 import { useMessageContext } from '../../context/MessageContext';
 import { useTranslationContext } from '../../context/TranslationContext';
-import { renderText } from '../../utils';
+import { renderText } from './renderText';
 
 import type { TranslationLanguages } from 'stream-chat';
 
 import type { StreamMessage } from '../../context/ChannelStateContext';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
 const selectColor = (number: number, dark: boolean) => {
   const hue = number * 137.508; // use golden angle approximation
@@ -37,8 +29,8 @@ const selectColor = (number: number, dark: boolean) => {
 
 const hashUserId = (userId: string) => {
   const hash = userId.split('').reduce((acc, c) => {
-    acc = (acc << 5) - acc + c.charCodeAt(0); // eslint-disable-line
-    return acc & acc; // eslint-disable-line no-bitwise
+    acc = (acc << 5) - acc + c.charCodeAt(0);
+    return acc & acc;
   }, 0);
   return Math.abs(hash) / 10 ** Math.ceil(Math.log10(Math.abs(hash) + 1));
 };
@@ -47,56 +39,31 @@ const getUserColor = (theme: string, userId: string) =>
   selectColor(hashUserId(userId), theme.includes('dark'));
 
 export type FixedHeightMessageProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 > = {
   groupedByUser?: boolean;
-  message?: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>;
+  message?: StreamMessage<StreamChatGenerics>;
 };
 
 const UnMemoizedFixedHeightMessage = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: FixedHeightMessageProps<At, Ch, Co, Ev, Me, Re, Us>,
+  props: FixedHeightMessageProps<StreamChatGenerics>,
 ) => {
   const { groupedByUser: propGroupedByUser, message: propMessage } = props;
 
-  const { theme } = useChatContext<At, Ch, Co, Ev, Me, Re, Us>('FixedHeightMessage');
+  const { theme } = useChatContext<StreamChatGenerics>('FixedHeightMessage');
 
-  const { groupedByUser: contextGroupedByUser, message: contextMessage } = useMessageContext<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >('FixedHeightMessage');
+  const { groupedByUser: contextGroupedByUser, message: contextMessage } =
+    useMessageContext<StreamChatGenerics>('FixedHeightMessage');
 
-  const { MessageDeleted = DefaultMessageDeleted } = useComponentContext<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >('FixedHeightMessage');
+  const { MessageDeleted = DefaultMessageDeleted } =
+    useComponentContext<StreamChatGenerics>('FixedHeightMessage');
 
   const { userLanguage } = useTranslationContext('FixedHeightMessage');
 
-  const groupedByUser = propGroupedByUser !== undefined ? propGroupedByUser : contextGroupedByUser;
+  const groupedByUser =
+    propGroupedByUser !== undefined ? propGroupedByUser : contextGroupedByUser;
   const message = propMessage || contextMessage;
 
   const handleAction = useActionHandler(message);
@@ -104,12 +71,13 @@ const UnMemoizedFixedHeightMessage = <
   const role = useUserRole(message);
 
   const messageTextToRender =
-    message?.i18n?.[`${userLanguage}_text` as `${TranslationLanguages}_text`] || message?.text;
+    message?.i18n?.[`${userLanguage}_text` as `${TranslationLanguages}_text`] ||
+    message?.text;
 
-  const renderedText = useMemo(() => renderText(messageTextToRender, message.mentioned_users), [
-    message.mentioned_users,
-    messageTextToRender,
-  ]);
+  const renderedText = useMemo(
+    () => renderText(messageTextToRender, message.mentioned_users),
+    [message.mentioned_users, messageTextToRender],
+  );
 
   const userId = message.user?.id || '';
   const userColor = useMemo(() => getUserColor(theme, userId), [userId, theme]);
@@ -132,8 +100,6 @@ const UnMemoizedFixedHeightMessage = <
         <Avatar
           image={message.user.image}
           name={message.user.name || message.user.id}
-          shape='rounded'
-          size={38}
           user={message.user}
         />
       )}

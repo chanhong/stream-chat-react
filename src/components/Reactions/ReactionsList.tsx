@@ -1,150 +1,168 @@
-import React, { Suspense, useMemo } from 'react';
+import React, { useState } from 'react';
+import clsx from 'clsx';
 
-import { getStrippedEmojiData, ReactionEmoji } from '../Channel/emojiData';
+import {
+  ReactionsListModal as DefaultReactionsListModal,
+  ReactionsListModalProps,
+} from './ReactionsListModal';
+import { useProcessReactions } from './hooks/useProcessReactions';
+import {
+  MessageContextValue,
+  useComponentContext,
+  useTranslationContext,
+} from '../../context';
 
-import { useEmojiContext } from '../../context/EmojiContext';
-import { useMessageContext } from '../../context/MessageContext';
+import { MAX_MESSAGE_REACTIONS_TO_FETCH } from '../Message/hooks';
 
-import type { NimbleEmojiProps } from 'emoji-mart';
-import type { ReactionResponse } from 'stream-chat';
-
-import type { ReactEventHandler } from '../Message/types';
-
+import type { ReactionGroupResponse, ReactionResponse, ReactionSort } from 'stream-chat';
+import type { DefaultStreamChatGenerics } from '../../types/types';
+import type { ReactionOptions } from './reactionOptions';
 import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+  ReactionDetailsComparator,
+  ReactionsComparator,
+  ReactionType,
+} from './types';
 
 export type ReactionsListProps<
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
-  /** Additional props to be passed to the [NimbleEmoji](https://github.com/missive/emoji-mart/blob/master/src/components/emoji/nimble-emoji.js) component from `emoji-mart` */
-  additionalEmojiProps?: Partial<NimbleEmojiProps>;
-  /** Custom on click handler for an individual reaction, defaults to `onReactionListClick` from the `MessageContext` */
-  onClick?: ReactEventHandler;
-  /** An object that keeps track of the count of each type of reaction on a message */
-  reaction_counts?: { [key: string]: number };
-  /** A list of the currently supported reactions on a message */
-  reactionOptions?: ReactionEmoji[];
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = Partial<
+  Pick<
+    MessageContextValue<StreamChatGenerics>,
+    'handleFetchReactions' | 'reactionDetailsSort'
+  >
+> & {
+  /** An array of the own reaction objects to distinguish own reactions visually */
+  own_reactions?: ReactionResponse<StreamChatGenerics>[];
+  /**
+   * An object that keeps track of the count of each type of reaction on a message
+   * @deprecated This override value is no longer taken into account. Use `reaction_groups` to override reaction counts instead.
+   * */
+  reaction_counts?: Record<string, number>;
+  /** An object containing summary for each reaction type on a message */
+  reaction_groups?: Record<string, ReactionGroupResponse>;
+  /**
+   * @deprecated
+   * A list of the currently supported reactions on a message
+   * */
+  reactionOptions?: ReactionOptions;
   /** An array of the reaction objects to display in the list */
-  reactions?: ReactionResponse<Re, Us>[];
+  reactions?: ReactionResponse<StreamChatGenerics>[];
   /** Display the reactions in the list in reverse order, defaults to false */
   reverse?: boolean;
+  /** Comparator function to sort the list of reacted users
+   * @deprecated use `reactionDetailsSort` instead
+   */
+  sortReactionDetails?: ReactionDetailsComparator<StreamChatGenerics>;
+  /** Comparator function to sort reactions, defaults to chronological order */
+  sortReactions?: ReactionsComparator;
 };
 
 const UnMemoizedReactionsList = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: ReactionsListProps<Re, Us>,
+  props: ReactionsListProps<StreamChatGenerics>,
 ) => {
   const {
-    additionalEmojiProps,
-    onClick,
-    reaction_counts: propReactionCounts,
-    reactionOptions: propReactionOptions,
-    reactions: propReactions,
+    handleFetchReactions,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    reactionDetailsSort,
     reverse = false,
+    sortReactionDetails,
+    ...rest
   } = props;
+  const { existingReactions, hasReactions, totalReactionCount } =
+    useProcessReactions(rest);
+  const [selectedReactionType, setSelectedReactionType] =
+    useState<ReactionType<StreamChatGenerics> | null>(null);
+  const { t } = useTranslationContext('ReactionsList');
+  const { ReactionsListModal = DefaultReactionsListModal } = useComponentContext();
 
-  const { Emoji, emojiConfig } = useEmojiContext('ReactionsList');
-  const { message, onReactionListClick } = useMessageContext<At, Ch, Co, Ev, Me, Re, Us>(
-    'ReactionsList',
-  );
+  const handleReactionButtonClick = (reactionType: string) => {
+    if (totalReactionCount > MAX_MESSAGE_REACTIONS_TO_FETCH) {
+      return;
+    }
 
-  const { defaultMinimalEmojis, emojiData: fullEmojiData, emojiSetDef } = emojiConfig || {};
-
-  const reactions = propReactions || message.latest_reactions || [];
-  const reactionCounts = propReactionCounts || message.reaction_counts || {};
-  const reactionOptions = propReactionOptions || defaultMinimalEmojis;
-  const reactionsAreCustom = !!propReactionOptions?.length;
-
-  const emojiData = useMemo(
-    () => (reactionsAreCustom ? fullEmojiData : getStrippedEmojiData(fullEmojiData)),
-    [fullEmojiData, reactionsAreCustom],
-  );
-
-  if (!reactions.length) return null;
-
-  const getTotalReactionCount = () =>
-    Object.values(reactionCounts).reduce((total, count) => total + count, 0);
-
-  const getCurrentMessageReactionTypes = () => {
-    const reactionTypes: string[] = [];
-    reactions.forEach(({ type }) => {
-      if (reactionTypes.indexOf(type) === -1) {
-        reactionTypes.push(type);
-      }
-    });
-    return reactionTypes;
+    setSelectedReactionType(reactionType as ReactionType<StreamChatGenerics>);
   };
 
-  const getEmojiByReactionType = (type: string): ReactionEmoji | undefined => {
-    const reactionEmoji = reactionOptions.find((option: ReactionEmoji) => option.id === type);
-    return reactionEmoji;
-  };
-
-  const getSupportedReactionMap = () => {
-    const reactionMap: Record<string, boolean> = {};
-    reactionOptions.forEach(({ id }) => (reactionMap[id] = true));
-    return reactionMap;
-  };
-
-  const messageReactionTypes = getCurrentMessageReactionTypes();
-  const supportedReactionMap = getSupportedReactionMap();
-
-  const supportedReactionsArePresent = messageReactionTypes.some(
-    (type) => supportedReactionMap[type],
-  );
-
-  if (!supportedReactionsArePresent) return null;
+  if (!hasReactions) return null;
 
   return (
-    <div
-      className={`str-chat__reaction-list ${reverse ? 'str-chat__reaction-list--reverse' : ''}`}
-      data-testid='reaction-list'
-      onClick={onClick || onReactionListClick}
-    >
-      <ul>
-        {messageReactionTypes.map((reactionType) => {
-          const emojiObject = getEmojiByReactionType(reactionType);
-
-          return emojiObject ? (
-            <li key={emojiObject.id}>
-              {
-                <Suspense fallback={null}>
-                  <Emoji
-                    data={emojiData}
-                    emoji={emojiObject}
-                    size={16}
-                    {...(reactionsAreCustom ? additionalEmojiProps : emojiSetDef)}
-                  />
-                </Suspense>
-              }
-              &nbsp;
-            </li>
-          ) : null;
+    <>
+      <div
+        aria-label={t('aria/Reaction list')}
+        className={clsx('str-chat__reaction-list str-chat__message-reactions-container', {
+          // we are stuck with both classes as both are used in CSS
+          'str-chat__reaction-list--reverse': reverse,
         })}
-        <li>
-          <span className='str-chat__reaction-list--counter'>{getTotalReactionCount()}</span>
-        </li>
-      </ul>
-    </div>
+        data-testid='reaction-list'
+        role='figure'
+      >
+        <ul className='str-chat__message-reactions'>
+          {existingReactions.map(
+            ({ EmojiComponent, isOwnReaction, reactionCount, reactionType }) =>
+              EmojiComponent && (
+                <li
+                  className={clsx('str-chat__message-reaction', {
+                    'str-chat__message-reaction-own': isOwnReaction,
+                  })}
+                  key={reactionType}
+                >
+                  <button
+                    aria-label={`Reactions: ${reactionType}`}
+                    data-testid={`reactions-list-button-${reactionType}`}
+                    onClick={() => handleReactionButtonClick(reactionType)}
+                    type='button'
+                  >
+                    <span className='str-chat__message-reaction-emoji'>
+                      <EmojiComponent />
+                    </span>
+                    &nbsp;
+                    <span
+                      className='str-chat__message-reaction-count'
+                      data-testclass='reaction-list-reaction-count'
+                    >
+                      {reactionCount}
+                    </span>
+                  </button>
+                </li>
+              ),
+          )}
+          <li>
+            <span className='str-chat__reaction-list--counter'>{totalReactionCount}</span>
+          </li>
+        </ul>
+      </div>
+      {selectedReactionType !== null && (
+        <ReactionsListModal
+          handleFetchReactions={
+            handleFetchReactions as (
+              reactionType?: string,
+              sort?: ReactionSort<StreamChatGenerics>,
+            ) => Promise<Array<ReactionResponse<StreamChatGenerics>>>
+          }
+          onClose={() => setSelectedReactionType(null)}
+          onSelectedReactionTypeChange={
+            setSelectedReactionType as ReactionsListModalProps['onSelectedReactionTypeChange']
+          }
+          open={selectedReactionType !== null}
+          reactions={existingReactions}
+          selectedReactionType={selectedReactionType}
+          sortReactionDetails={
+            sortReactionDetails as (
+              a: ReactionResponse<StreamChatGenerics>,
+              b: ReactionResponse<StreamChatGenerics>,
+            ) => number
+          }
+        />
+      )}
+    </>
   );
 };
 
 /**
  * Component that displays a list of reactions on a message.
  */
-export const ReactionsList = React.memo(UnMemoizedReactionsList) as typeof UnMemoizedReactionsList;
+export const ReactionsList = React.memo(
+  UnMemoizedReactionsList,
+) as typeof UnMemoizedReactionsList;

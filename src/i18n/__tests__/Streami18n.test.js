@@ -1,18 +1,23 @@
 /* eslint-disable */
 import { Streami18n } from '../Streami18n';
-import { v4 as uuidv4 } from 'uuid';
+import { nanoid } from 'nanoid';
 import { default as Dayjs } from 'dayjs';
+import moment from 'moment-timezone';
 import { nlTranslations, frTranslations } from '../translations';
 import 'dayjs/locale/nl';
 import localeData from 'dayjs/plugin/localeData';
 Dayjs.extend(localeData);
 
 const customDayjsLocaleConfig = {
-  months: 'januar_februar_mars_apríl_mai_juni_juli_august_september_oktober_november_desember'.split(
-    '_',
-  ),
+  months:
+    'januar_februar_mars_apríl_mai_juni_juli_august_september_oktober_november_desember'.split(
+      '_',
+    ),
   monthsShort: 'jan_feb_mar_apr_mai_jun_jul_aug_sep_okt_nov_des'.split('_'),
-  weekdays: 'sunnudagur_mánadagur_týsdagur_mikudagur_hósdagur_fríggjadagur_leygardagur'.split('_'),
+  weekdays:
+    'sunnudagur_mánadagur_týsdagur_mikudagur_hósdagur_fríggjadagur_leygardagur'.split(
+      '_',
+    ),
   weekdaysShort: 'sun_mán_týs_mik_hós_frí_ley'.split('_'),
   weekdaysMin: 'su_má_tý_mi_hó_fr_le'.split('_'),
   formats: {
@@ -67,7 +72,7 @@ describe('Streami18n instance - default', () => {
 
   it('should provide default english translator', async () => {
     const { t: _t } = await streami18n.getTranslators();
-    const text = uuidv4();
+    const text = nanoid();
 
     expect(_t(text)).toBe(text);
   });
@@ -86,7 +91,12 @@ describe('Streami18n instance - with built-in langauge', () => {
     it('should provide dutch translator', async () => {
       const { t: _t } = await streami18n.getTranslators();
       for (const key in nlTranslations) {
-        if (key.indexOf('{{') > -1 && key.indexOf('}}') > -1) continue;
+        if (
+          (key.includes('{{') && key.includes('}}')) ||
+          typeof nlTranslations[key] !== 'string'
+        ) {
+          continue;
+        }
 
         expect(_t(key)).toBe(nlTranslations[key]);
       }
@@ -108,7 +118,12 @@ describe('Streami18n instance - with built-in langauge', () => {
     it('should provide dutch translator', async () => {
       const { t: _t } = await streami18n.getTranslators();
       for (const key in nlTranslations) {
-        if (key.indexOf('{{') > -1 && key.indexOf('}}') > -1) continue;
+        if (
+          (key.includes('{{') && key.includes('}}')) ||
+          typeof nlTranslations[key] !== 'string'
+        ) {
+          continue;
+        }
 
         expect(_t(key)).toBe(nlTranslations[key]);
       }
@@ -135,7 +150,9 @@ describe('Streami18n instance - with built-in langauge', () => {
       for (const key in streami18nOptions.dayjsLocaleConfigForLanguage) {
         if (localeConfig[key]) {
           expect(
-            typeof localeConfig[key] === 'function' ? localeConfig[key]() : localeConfig[key],
+            typeof localeConfig[key] === 'function'
+              ? localeConfig[key]()
+              : localeConfig[key],
           ).toStrictEqual(streami18nOptions.dayjsLocaleConfigForLanguage[key]);
         }
       }
@@ -204,7 +221,9 @@ describe('registerTranslation - register new language `mr` (Marathi) ', () => {
     for (const key in customDayjsLocaleConfig) {
       if (localeConfig[key]) {
         expect(customDayjsLocaleConfig[key]).toStrictEqual(
-          typeof localeConfig[key] === 'function' ? localeConfig[key]() : localeConfig[key],
+          typeof localeConfig[key] === 'function'
+            ? localeConfig[key]()
+            : localeConfig[key],
         );
       }
     }
@@ -220,9 +239,80 @@ describe('setLanguage - switch to french', () => {
 
     const { t: _t } = await streami18n.getTranslators();
     for (const key in frTranslations) {
-      if (key.indexOf('{{') > -1 && key.indexOf('}}') > -1) continue;
+      if (
+        (key.includes('{{') && key.includes('}}')) ||
+        typeof nlTranslations[key] !== 'string'
+      ) {
+        continue;
+      }
 
       expect(_t(key)).toBe(frTranslations[key]);
     }
+  });
+});
+
+describe('Streami18n timezone', () => {
+  describe.each([
+    ['Dayjs', Dayjs],
+    ['moment', moment],
+  ])('%s', (moduleName, module) => {
+    it('is by default the local timezone', () => {
+      const streamI18n = new Streami18n({ DateTimeParser: module });
+      const date = new Date();
+      expect(streamI18n.tDateTimeParser(date).format('H')).toBe(
+        date.getHours().toString(),
+      );
+    });
+
+    it('can be set to different timezone on init', () => {
+      const streamI18n = new Streami18n({
+        DateTimeParser: module,
+        timezone: 'Europe/Prague',
+      });
+      const date = new Date();
+      expect(streamI18n.tDateTimeParser(date).format('H')).not.toBe(
+        date.getHours().toString(),
+      );
+      expect(streamI18n.tDateTimeParser(date).format('H')).not.toBe(
+        (date.getUTCHours() - 2).toString(),
+      );
+    });
+
+    it('is ignored if datetime parser does not support timezones', () => {
+      const tz = module.tz;
+      delete module.tz;
+
+      const streamI18n = new Streami18n({
+        DateTimeParser: module,
+        timezone: 'Europe/Prague',
+      });
+      const date = new Date();
+      expect(streamI18n.tDateTimeParser(date).format('H')).toBe(
+        date.getHours().toString(),
+      );
+
+      module.tz = tz;
+    });
+    describe('formatters property', () => {
+      it('contains the default timestampFormatter', () => {
+        expect(new Streami18n().formatters.timestampFormatter).toBeDefined();
+      });
+      it('allows to override the default timestampFormatter', async () => {
+        const i18n = new Streami18n({
+          formatters: { timestampFormatter: (s) => () => 'custom' },
+          translationsForLanguage: { abc: '{{ value | timestampFormatter }}' },
+        });
+        await i18n.init();
+        expect(i18n.t('abc')).toBe('custom');
+      });
+      it('allows to add new custom formatter', async () => {
+        const i18n = new Streami18n({
+          formatters: { customFormatter: (s) => () => 'custom' },
+          translationsForLanguage: { abc: '{{ value | customFormatter }}' },
+        });
+        await i18n.init();
+        expect(i18n.t('abc')).toBe('custom');
+      });
+    });
   });
 });

@@ -11,13 +11,26 @@ import type { ChannelNotifications } from '../../context/ChannelStateContext';
 
 export type MessageListNotificationsProps = {
   hasNewMessages: boolean;
+  isMessageListScrolledToBottom: boolean;
+  isNotAtLatestMessageSet: boolean;
   MessageNotification: React.ComponentType<MessageNotificationProps>;
   notifications: ChannelNotifications;
   scrollToBottom: () => void;
+  threadList?: boolean;
+  unreadCount?: number;
 };
 
 export const MessageListNotifications = (props: MessageListNotificationsProps) => {
-  const { hasNewMessages, MessageNotification, notifications, scrollToBottom } = props;
+  const {
+    hasNewMessages,
+    isMessageListScrolledToBottom,
+    isNotAtLatestMessageSet,
+    MessageNotification,
+    notifications,
+    scrollToBottom,
+    threadList,
+    unreadCount,
+  } = props;
 
   const { t } = useTranslationContext('MessageListNotifications');
 
@@ -29,8 +42,16 @@ export const MessageListNotifications = (props: MessageListNotificationsProps) =
         </CustomNotification>
       ))}
       <ConnectionStatus />
-      <MessageNotification onClick={scrollToBottom} showNotification={hasNewMessages}>
-        {t('New Messages!')}
+      <MessageNotification
+        isMessageListScrolledToBottom={isMessageListScrolledToBottom}
+        onClick={scrollToBottom}
+        showNotification={hasNewMessages || isNotAtLatestMessageSet}
+        threadList={threadList}
+        unreadCount={unreadCount}
+      >
+        {isNotAtLatestMessageSet
+          ? t<string>('Latest Messages')
+          : t<string>('New Messages!')}
       </MessageNotification>
     </div>
   );

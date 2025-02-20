@@ -1,30 +1,25 @@
 import { CommandItem } from '../../CommandItem/CommandItem';
 
 import { useChannelStateContext } from '../../../context/ChannelStateContext';
+import { useTranslationContext } from '../../../context';
+
 import type { CommandResponse } from 'stream-chat';
 
 import type { CommandTriggerSetting } from '../DefaultTriggerProvider';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../../types/types';
+import type { DefaultStreamChatGenerics } from '../../../types/types';
+
+type ValidCommand<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = Required<Pick<CommandResponse<StreamChatGenerics>, 'name'>> &
+  Omit<CommandResponse<StreamChatGenerics>, 'name'>;
 
 export const useCommandTrigger = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
->(): CommandTriggerSetting<Co> => {
-  const { channelConfig } = useChannelStateContext<At, Ch, Co, Ev, Me, Re, Us>('useCommandTrigger');
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>(): CommandTriggerSetting<StreamChatGenerics> => {
+  const { channelConfig } =
+    useChannelStateContext<StreamChatGenerics>('useCommandTrigger');
+  const { t } = useTranslationContext('useCommandTrigger');
 
   const commands = channelConfig?.commands;
 
@@ -34,9 +29,11 @@ export const useCommandTrigger = <
       if (text.indexOf('/') !== 0 || !commands) {
         return [];
       }
-      const selectedCommands = commands.filter((command) => command.name?.indexOf(query) !== -1);
+      const selectedCommands = commands.filter(
+        (command) => command.name?.indexOf(query) !== -1,
+      );
 
-      // sort alphabetically unless the you're matching the first char
+      // sort alphabetically unless you're matching the first char
       selectedCommands.sort((a, b) => {
         let nameA = a.name?.toLowerCase();
         let nameB = b.name?.toLowerCase();
@@ -59,12 +56,35 @@ export const useCommandTrigger = <
         return 0;
       });
 
-      const result = selectedCommands.slice(0, 10);
+      const result = selectedCommands.slice(0, 5);
       if (onReady)
         onReady(
-          result.filter(
-            (result): result is CommandResponse<Co> & { name: string } => result.name !== undefined,
-          ),
+          result
+            .filter(
+              (
+                result,
+              ): result is CommandResponse<StreamChatGenerics> & { name: string } =>
+                result.name !== undefined,
+            )
+            .map((commandData) => {
+              const translatedCommandData: ValidCommand<StreamChatGenerics> = {
+                name: commandData.name,
+              };
+
+              if (commandData.args)
+                translatedCommandData.args = t(`${commandData.name}-command-args`, {
+                  defaultValue: commandData.args,
+                });
+              if (commandData.description)
+                translatedCommandData.description = t(
+                  `${commandData.name}-command-description`,
+                  {
+                    defaultValue: commandData.description,
+                  },
+                );
+
+              return translatedCommandData;
+            }),
           query,
         );
 

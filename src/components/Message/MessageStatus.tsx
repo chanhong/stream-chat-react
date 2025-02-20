@@ -1,120 +1,157 @@
-import React from 'react';
+import React, { useState } from 'react';
+import clsx from 'clsx';
 
-import { DeliveredCheckIcon } from './icons';
-import { getReadByTooltipText } from './utils';
+import { MessageDeliveredIcon } from './icons';
+import { getReadByTooltipText, mapToUserNameOrId, TooltipUsernameMapper } from './utils';
 
 import { AvatarProps, Avatar as DefaultAvatar } from '../Avatar';
 import { LoadingIndicator } from '../Loading';
-import { Tooltip } from '../Tooltip';
+import { PopperTooltip } from '../Tooltip';
+import { useEnterLeaveHandlers } from '../Tooltip/hooks';
 
 import { useChatContext } from '../../context/ChatContext';
 import { useComponentContext } from '../../context/ComponentContext';
 import { useMessageContext } from '../../context/MessageContext';
 import { useTranslationContext } from '../../context/TranslationContext';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
 export type MessageStatusProps = {
+  /* Custom UI component to display a user's avatar (overrides the value from `ComponentContext`) */
   Avatar?: React.ComponentType<AvatarProps>;
+  /* Custom component to render when message is considered delivered, not read. The default UI renders MessageDeliveredIcon and a tooltip with string 'Delivered'. */
+  MessageDeliveredStatus?: React.ComponentType;
+  /* Custom component to render when message is considered delivered and read. The default UI renders the last reader's Avatar and a tooltip with string readers' names. */
+  MessageReadStatus?: React.ComponentType;
+  /* Custom component to render when message is considered as being the in the process of delivery. The default UI renders LoadingIndicator and a tooltip with string 'Sending'. */
+  MessageSendingStatus?: React.ComponentType;
+  /* Message type string to be added to CSS class names. */
   messageType?: string;
+  /* Allows to customize the username(s) that appear on the message status tooltip */
+  tooltipUserNameMapper?: TooltipUsernameMapper;
 };
 
 const UnMemoizedMessageStatus = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
   props: MessageStatusProps,
 ) => {
-  const { Avatar: propAvatar, messageType = 'simple' } = props;
+  const {
+    Avatar: propAvatar,
+    MessageDeliveredStatus,
+    MessageReadStatus,
+    MessageSendingStatus,
+    messageType = 'simple',
+    tooltipUserNameMapper = mapToUserNameOrId,
+  } = props;
 
-  const { client } = useChatContext<At, Ch, Co, Ev, Me, Re, Us>('MessageStatus');
-  const { Avatar: contextAvatar } = useComponentContext<At, Ch, Co, Ev, Me, Re, Us>(
-    'MessageStatus',
-  );
-  const { isMyMessage, lastReceivedId, message, readBy, threadList } = useMessageContext<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >('MessageStatus');
+  const { handleEnter, handleLeave, tooltipVisible } =
+    useEnterLeaveHandlers<HTMLSpanElement>();
+
+  const { client } = useChatContext<StreamChatGenerics>('MessageStatus');
+  const { Avatar: contextAvatar } =
+    useComponentContext<StreamChatGenerics>('MessageStatus');
+  const { isMyMessage, lastReceivedId, message, readBy, threadList } =
+    useMessageContext<StreamChatGenerics>('MessageStatus');
   const { t } = useTranslationContext('MessageStatus');
+  const [referenceElement, setReferenceElement] = useState<HTMLSpanElement | null>(null);
 
   const Avatar = propAvatar || contextAvatar || DefaultAvatar;
 
-  if (!isMyMessage() || message.type === 'error') {
-    return null;
-  }
+  if (!isMyMessage() || message.type === 'error') return null;
 
   const justReadByMe = readBy?.length === 1 && readBy[0].id === client.user?.id;
+  const rootClassName = `str-chat__message-${messageType}-status str-chat__message-status`;
 
-  if (message.status === 'sending') {
-    return (
-      <span
-        className={`str-chat__message-${messageType}-status`}
-        data-testid='message-status-sending'
-      >
-        <Tooltip>{t('Sending...')}</Tooltip>
-        <LoadingIndicator />
-      </span>
-    );
-  }
+  const sending = message.status === 'sending';
+  const delivered =
+    message.status === 'received' && message.id === lastReceivedId && !threadList;
+  const deliveredAndRead = !!(readBy?.length && !threadList && !justReadByMe);
 
-  if (readBy?.length && !threadList && !justReadByMe) {
-    const lastReadUser = readBy.filter((item) => item.id !== client.user?.id)[0];
+  const readersWithoutOwnUser = deliveredAndRead
+    ? readBy.filter((item) => item.id !== client.user?.id)
+    : [];
+  const [lastReadUser] = readersWithoutOwnUser;
 
-    return (
-      <span
-        className={`str-chat__message-${messageType}-status`}
-        data-testid='message-status-read-by'
-      >
-        <Tooltip>{getReadByTooltipText(readBy, t, client)}</Tooltip>
-        <Avatar
-          image={lastReadUser.image}
-          name={lastReadUser.name || lastReadUser.id}
-          size={15}
-          user={lastReadUser}
-        />
-        {readBy.length > 2 && (
-          <span
-            className={`str-chat__message-${messageType}-status-number`}
-            data-testid='message-status-read-by-many'
-          >
-            {readBy.length - 1}
-          </span>
-        )}
-      </span>
-    );
-  }
+  return (
+    <span
+      className={rootClassName}
+      data-testid={clsx({
+        'message-status-read-by': deliveredAndRead,
+        'message-status-received': delivered && !deliveredAndRead,
+        'message-status-sending': sending,
+      })}
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
+      ref={setReferenceElement}
+    >
+      {sending &&
+        (MessageSendingStatus ? (
+          <MessageSendingStatus />
+        ) : (
+          <>
+            <PopperTooltip
+              offset={[0, 5]}
+              referenceElement={referenceElement}
+              visible={tooltipVisible}
+            >
+              {t<string>('Sending...')}
+            </PopperTooltip>
+            <LoadingIndicator />
+          </>
+        ))}
 
-  if (message.status === 'received' && message.id === lastReceivedId && !threadList) {
-    return (
-      <span
-        className={`str-chat__message-${messageType}-status`}
-        data-testid='message-status-received'
-      >
-        <Tooltip>{t('Delivered')}</Tooltip>
-        <DeliveredCheckIcon />
-      </span>
-    );
-  }
+      {delivered &&
+        !deliveredAndRead &&
+        (MessageDeliveredStatus ? (
+          <MessageDeliveredStatus />
+        ) : (
+          <>
+            <PopperTooltip
+              offset={[0, 5]}
+              referenceElement={referenceElement}
+              visible={tooltipVisible}
+            >
+              {t<string>('Delivered')}
+            </PopperTooltip>
+            <MessageDeliveredIcon />
+          </>
+        ))}
 
-  return null;
+      {deliveredAndRead &&
+        (MessageReadStatus ? (
+          <MessageReadStatus />
+        ) : (
+          <>
+            <PopperTooltip
+              offset={[0, 5]}
+              referenceElement={referenceElement}
+              visible={tooltipVisible}
+            >
+              {getReadByTooltipText(readBy, t, client, tooltipUserNameMapper)}
+            </PopperTooltip>
+
+            <Avatar
+              className='str-chat__avatar--message-status'
+              image={lastReadUser.image}
+              name={lastReadUser.name || lastReadUser.id}
+              user={lastReadUser}
+            />
+
+            {readersWithoutOwnUser.length > 1 && (
+              <span
+                className={`str-chat__message-${messageType}-status-number`}
+                data-testid='message-status-read-by-many'
+              >
+                {readersWithoutOwnUser.length}
+              </span>
+            )}
+          </>
+        ))}
+    </span>
+  );
 };
 
-export const MessageStatus = React.memo(UnMemoizedMessageStatus) as typeof UnMemoizedMessageStatus;
+export const MessageStatus = React.memo(
+  UnMemoizedMessageStatus,
+) as typeof UnMemoizedMessageStatus;

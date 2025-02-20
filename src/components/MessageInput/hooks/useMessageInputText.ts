@@ -1,39 +1,29 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { logChatPromiseExecution } from 'stream-chat';
-import type { MessageInputReducerAction, MessageInputState } from './useMessageInputState';
+import type {
+  MessageInputReducerAction,
+  MessageInputState,
+} from './useMessageInputState';
 import type { MessageInputProps } from '../MessageInput';
 import { useChannelStateContext } from '../../../context/ChannelStateContext';
 
-import type {
-  CustomTrigger,
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../../types/types';
+import type { CustomTrigger, DefaultStreamChatGenerics } from '../../../types/types';
+import type { EnrichURLsController } from './useLinkPreviews';
 
 export const useMessageInputText = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType,
-  V extends CustomTrigger = CustomTrigger
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
 >(
-  props: MessageInputProps<At, Ch, Co, Ev, Me, Re, Us, V>,
-  state: MessageInputState<At, Us>,
-  dispatch: React.Dispatch<MessageInputReducerAction<Us>>,
+  props: MessageInputProps<StreamChatGenerics, V>,
+  state: MessageInputState<StreamChatGenerics>,
+  dispatch: React.Dispatch<MessageInputReducerAction<StreamChatGenerics>>,
+  findAndEnqueueURLsToEnrich?: EnrichURLsController['findAndEnqueueURLsToEnrich'],
 ) => {
-  const { channel } = useChannelStateContext<At, Ch, Co, Ev, Me, Re, Us>('useMessageInputText');
+  const { channel } = useChannelStateContext<StreamChatGenerics>('useMessageInputText');
   const { additionalTextareaProps, focus, parent, publishTypingEvent = true } = props;
   const { text } = state;
 
-  const textareaRef = useRef<HTMLTextAreaElement>();
+  const textareaRef = useRef<HTMLTextAreaElement>(undefined);
 
   // Focus
   useEffect(() => {
@@ -43,14 +33,14 @@ export const useMessageInputText = <
   }, [focus]);
 
   // Text + cursor position
-  const newCursorPosition = useRef<number>();
+  const newCursorPosition = useRef<number>(undefined);
 
   const insertText = useCallback(
     (textToInsert: string) => {
       const { maxLength } = additionalTextareaProps || {};
 
       if (!textareaRef.current) {
-        dispatch({
+        return dispatch({
           getNewText: (text) => {
             const updatedText = text + textToInsert;
             if (maxLength && updatedText.length > maxLength) {
@@ -60,7 +50,6 @@ export const useMessageInputText = <
           },
           type: 'setText',
         });
-        return;
       }
 
       const { selectionEnd, selectionStart } = textareaRef.current;
@@ -69,7 +58,9 @@ export const useMessageInputText = <
       dispatch({
         getNewText: (prevText) => {
           const updatedText =
-            prevText.slice(0, selectionStart) + textToInsert + prevText.slice(selectionEnd);
+            prevText.slice(0, selectionStart) +
+            textToInsert +
+            prevText.slice(selectionEnd);
 
           if (maxLength && updatedText.length > maxLength) {
             return updatedText.slice(0, maxLength);
@@ -80,6 +71,7 @@ export const useMessageInputText = <
         type: 'setText',
       });
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [additionalTextareaProps, newCursorPosition, textareaRef],
   );
 
@@ -104,11 +96,15 @@ export const useMessageInputText = <
         getNewText: () => newText,
         type: 'setText',
       });
+
+      findAndEnqueueURLsToEnrich?.(newText);
+
       if (publishTypingEvent && newText && channel) {
         logChatPromiseExecution(channel.keystroke(parent?.id), 'start typing event');
       }
     },
-    [channel, parent, publishTypingEvent],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [channel, findAndEnqueueURLsToEnrich, parent, publishTypingEvent],
   );
 
   return {

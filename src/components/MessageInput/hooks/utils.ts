@@ -1,18 +1,10 @@
-import type { ImageUpload } from 'react-file-utils';
-import type { FileUploadConfig, UserResponse } from 'stream-chat';
+import type { AppSettingsAPIResponse, FileUploadConfig, UserResponse } from 'stream-chat';
 
 import type { ChannelActionContextValue } from '../../../context/ChannelActionContext';
 import type { ChatContextValue } from '../../../context/ChatContext';
 import type { TranslationContextValue } from '../../../context/TranslationContext';
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../../types/types';
+import type { DefaultStreamChatGenerics } from '../../../types/types';
+import { DEFAULT_UPLOAD_SIZE_LIMIT_BYTES } from '../../../constants/limits';
 
 export const accentsMap: { [key: string]: string } = {
   a: 'á|à|ã|â|À|Á|Ã|Â',
@@ -67,17 +59,21 @@ export const calculateLevenshtein = (query: string, name: string) => {
   return matrix[name.length][query.length];
 };
 
-export type SearchLocalUserParams<Us extends DefaultUserType<Us> = DefaultUserType> = {
+export type SearchLocalUserParams<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = {
   ownUserId: string | undefined;
   query: string;
   text: string;
-  users: UserResponse<Us>[];
+  users: UserResponse<StreamChatGenerics>[];
   useMentionsTransliteration?: boolean;
 };
 
-export const searchLocalUsers = <Us extends DefaultUserType<Us> = DefaultUserType>(
-  params: SearchLocalUserParams<Us>,
-): UserResponse<Us>[] => {
+export const searchLocalUsers = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>(
+  params: SearchLocalUserParams<StreamChatGenerics>,
+): UserResponse<StreamChatGenerics>[] => {
   const { ownUserId, query, text, useMentionsTransliteration, users } = params;
 
   const matchingUsers = users.filter((user) => {
@@ -90,7 +86,8 @@ export const searchLocalUsers = <Us extends DefaultUserType<Us> = DefaultUserTyp
 
     if (useMentionsTransliteration) {
       (async () => {
-        const { default: transliterate } = await import('@sindresorhus/transliterate');
+        // eslint-disable-next-line import/no-extraneous-dependencies
+        const { default: transliterate } = await import('@stream-io/transliterate');
         updatedName = transliterate(user.name || '').toLowerCase();
         updatedQuery = transliterate(query).toLowerCase();
         updatedId = transliterate(user.id).toLowerCase();
@@ -102,7 +99,10 @@ export const searchLocalUsers = <Us extends DefaultUserType<Us> = DefaultUserTyp
 
     if (updatedName) {
       const levenshtein = calculateLevenshtein(updatedQuery, updatedName);
-      if (updatedName.includes(updatedQuery) || (levenshtein <= maxDistance && lastDigits)) {
+      if (
+        updatedName.includes(updatedQuery) ||
+        (levenshtein <= maxDistance && lastDigits)
+      ) {
         return true;
       }
     }
@@ -116,47 +116,41 @@ export const searchLocalUsers = <Us extends DefaultUserType<Us> = DefaultUserTyp
 };
 
 type CheckUploadPermissionsParams<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 > = {
-  addNotification: ChannelActionContextValue<At, Ch, Co, Ev, Me, Re, Us>['addNotification'];
-  appSettings: ChatContextValue<At, Ch, Co, Ev, Me, Re, Us>['appSettings'];
-  file: ImageUpload['file'];
+  addNotification: ChannelActionContextValue<StreamChatGenerics>['addNotification'];
+  file: File;
+  getAppSettings: ChatContextValue<StreamChatGenerics>['getAppSettings'];
   t: TranslationContextValue['t'];
   uploadType: 'image' | 'file';
 };
 
-export const checkUploadPermissions = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+export const checkUploadPermissions = async <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  params: CheckUploadPermissionsParams<At, Ch, Co, Ev, Me, Re, Us>,
+  params: CheckUploadPermissionsParams<StreamChatGenerics>,
 ) => {
-  const { addNotification, appSettings, file, t, uploadType } = params;
+  const { addNotification, file, getAppSettings, t, uploadType } = params;
+
+  let appSettings: AppSettingsAPIResponse<StreamChatGenerics> | null = null;
+  appSettings = await getAppSettings();
 
   const {
     allowed_file_extensions,
     allowed_mime_types,
     blocked_file_extensions,
     blocked_mime_types,
+    size_limit,
   } =
     ((uploadType === 'image'
       ? appSettings?.app?.image_upload_config
       : appSettings?.app?.file_upload_config) as FileUploadConfig) || {};
 
-  const sendErrorNotification = () =>
+  const sendNotAllowedErrorNotification = () =>
     addNotification(
-      t(`Upload type: "{{ type }}" is not allowed`, { type: file.type || 'unknown type' }),
+      t(`Upload type: "{{ type }}" is not allowed`, {
+        type: file.type || 'unknown type',
+      }),
       'error',
     );
 
@@ -166,7 +160,7 @@ export const checkUploadPermissions = <
     );
 
     if (!allowed) {
-      sendErrorNotification();
+      sendNotAllowedErrorNotification();
       return false;
     }
   }
@@ -177,7 +171,7 @@ export const checkUploadPermissions = <
     );
 
     if (blocked) {
-      sendErrorNotification();
+      sendNotAllowedErrorNotification();
       return false;
     }
   }
@@ -188,7 +182,7 @@ export const checkUploadPermissions = <
     );
 
     if (!allowed) {
-      sendErrorNotification();
+      sendNotAllowedErrorNotification();
       return false;
     }
   }
@@ -199,10 +193,34 @@ export const checkUploadPermissions = <
     );
 
     if (blocked) {
-      sendErrorNotification();
+      sendNotAllowedErrorNotification();
       return false;
     }
   }
 
+  const sizeLimit = size_limit || DEFAULT_UPLOAD_SIZE_LIMIT_BYTES;
+  if (file.size && file.size > sizeLimit) {
+    addNotification(
+      t('File is too large: {{ size }}, maximum upload size is {{ limit }}', {
+        limit: prettifyFileSize(sizeLimit),
+        size: prettifyFileSize(file.size),
+      }),
+      'error',
+    );
+    return false;
+  }
+
   return true;
 };
+
+export function prettifyFileSize(bytes: number, precision = 3) {
+  const units = ['B', 'kB', 'MB', 'GB'];
+  const exponent = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1,
+  );
+  const mantissa = bytes / 1024 ** exponent;
+  const formattedMantissa =
+    precision === 0 ? Math.round(mantissa).toString() : mantissa.toPrecision(precision);
+  return `${formattedMantissa} ${units[exponent]}`;
+}

@@ -1,46 +1,35 @@
 {
   "compilerOptions": {
-    "baseUrl": "./src",
-    "paths": {
-      "*": ["src/@types/*"]
-    },
-    "allowUnreachableCode": false,
-    "allowUnusedLabels": false,
-    "esModuleInterop": true,
-    "importsNotUsedAsValues": "error",
-    "forceConsistentCasingInFileNames": true,
+    "lib": ["ES2020", "DOM"],
+    "target": "ES2020",
     "jsx": "react",
-    "lib": ["esnext", "DOM"],
-    "module": "esnext",
-    "moduleResolution": "node",
+    "module": "ES2020",
+    "esModuleInterop": true,
+    "moduleResolution": "Node",
+    "moduleDetection": "force",
+    "allowSyntheticDefaultImports": true,
+    "isolatedModules": true,
+    "allowJs": true,
+    "resolveJsonModule": true,
+
+    "strict": true,
+    "allowUnreachableCode": false,
+    "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
+    "noImplicitAny": true,
     "noImplicitReturns": true,
     "noImplicitUseStrict": false,
     "noStrictGenericChecks": false,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "strictNullChecks": true,
-    "resolveJsonModule": true,
-    "skipLibCheck": false,
-    "strict": true,
-    "target": "ES5",
-    "allowSyntheticDefaultImports": true,
-    "noEmitOnError": false,
-    "noImplicitAny": true,
-    "allowJs": true,
-    "checkJs": false,
-    "outDir": "./dist",
+
+    "importHelpers": true,
+    "skipLibCheck": true,
+    "noEmitOnError": true,
     "declaration": true,
-    "declarationDir": "./dist",
-    "declarationMap": true
+    "outDir": "./dist"
   },
   "include": ["./src/**/*"],
-  "exclude": [
-    "./src/docs/*",
-    "./src/mock-builders",
-    "node_modules",
-    "babel.config.js",
-    "jest.config.js",
-    "**/__tests__/*.test.js"
-  ]
+  "exclude": ["./src/stories", "./src/mock-builders", "./src/**/__tests__/*"]
 }

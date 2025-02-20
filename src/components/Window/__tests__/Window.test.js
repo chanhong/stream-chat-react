@@ -7,49 +7,51 @@ import { Window } from '../Window';
 import { ChannelStateProvider } from '../../../context/ChannelStateContext';
 import { generateMessage } from '../../../mock-builders';
 
-const renderComponent = ({ channelStateContextMock, children, props }) =>
+const renderComponent = ({ channelStateContextMock, props }) =>
   render(
-    <ChannelStateProvider value={channelStateContextMock}>
-      <Window {...props}>{children}</Window>
+    <ChannelStateProvider value={channelStateContextMock ?? {}}>
+      <Window {...props} />
     </ChannelStateProvider>,
   );
 
 const thread = generateMessage();
+const THREAD_OPEN_CLASS_NAME = 'str-chat__main-panel--thread-open';
 
 describe('Window', () => {
-  it('should render its children if hideOnThread is false and thread is truthy', () => {
-    const { getByText } = renderComponent({
-      channelStateContextMock: {
-        thread,
-      },
-      children: [<div key='bla'>bla</div>],
-      props: { hideOnThread: false },
-    });
+  it.each([
+    ['add', thread],
+    ['', undefined],
+  ])(
+    'should %s class str-chat__main-panel--thread-open when thread is open',
+    (_, thread) => {
+      const { container } = renderComponent({
+        channelStateContextMock: {
+          thread,
+        },
+      });
+      if (thread) {
+        expect(container.firstChild).toHaveClass(THREAD_OPEN_CLASS_NAME);
+      } else {
+        expect(container.firstChild).not.toHaveClass(THREAD_OPEN_CLASS_NAME);
+      }
+    },
+  );
 
-    expect(getByText('bla')).toBeInTheDocument();
-  });
+  it.each([
+    ['add', thread],
+    ['', undefined],
+  ])(
+    'should %s class str-chat__main-panel--thread-open when thread is passed via prop',
+    (_, thread) => {
+      const { container } = renderComponent({
+        props: { thread },
+      });
 
-  it('should not render its children if hideOnThread is true and thread is truthy', () => {
-    const { queryByText } = renderComponent({
-      channelStateContextMock: {
-        thread,
-      },
-      children: [<div key='bla'>bla</div>],
-      props: { hideOnThread: true },
-    });
-
-    expect(queryByText('bla')).not.toBeInTheDocument();
-  });
-
-  it('should render its children if hideOnThread is true and thread is falsy', () => {
-    const { getByText } = renderComponent({
-      channelStateContextMock: {
-        thread: undefined,
-      },
-      children: [<div key='bla'>bla</div>],
-      props: { hideOnThread: true },
-    });
-
-    expect(getByText('bla')).toBeInTheDocument();
-  });
+      if (thread) {
+        expect(container.firstChild).toHaveClass(THREAD_OPEN_CLASS_NAME);
+      } else {
+        expect(container.firstChild).not.toHaveClass(THREAD_OPEN_CLASS_NAME);
+      }
+    },
+  );
 });

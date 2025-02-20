@@ -1,99 +1,97 @@
-import { useCallback, useEffect, useState } from 'react';
-import Dayjs from 'dayjs';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { TranslationContextValue } from '../../../context/TranslationContext';
 import {
+  defaultDateTimeParser,
   isLanguageSupported,
+  Streami18n,
   SupportedTranslations,
-  TranslationContextValue,
-} from '../../../context/TranslationContext';
-import { Streami18n } from '../../../i18n';
-import { version } from '../../../version';
-
-import type { AppSettingsAPIResponse, Channel, Event, Mute, StreamChat } from 'stream-chat';
+} from '../../../i18n';
 
 import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../../types/types';
+  AppSettingsAPIResponse,
+  Channel,
+  Event,
+  Mute,
+  StreamChat,
+} from 'stream-chat';
+
+import type { DefaultStreamChatGenerics } from '../../../types/types';
 
 export type UseChatParams<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 > = {
-  client: StreamChat<At, Ch, Co, Ev, Me, Re, Us>;
+  client: StreamChat<StreamChatGenerics>;
   defaultLanguage?: SupportedTranslations;
   i18nInstance?: Streami18n;
   initialNavOpen?: boolean;
 };
 
 export const useChat = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >({
   client,
   defaultLanguage = 'en',
   i18nInstance,
   initialNavOpen,
-}: UseChatParams<At, Ch, Co, Ev, Me, Re, Us>) => {
+}: UseChatParams<StreamChatGenerics>) => {
   const [translators, setTranslators] = useState<TranslationContextValue>({
     t: (key: string) => key,
-    tDateTimeParser: (input) => Dayjs(input),
+    tDateTimeParser: defaultDateTimeParser,
     userLanguage: 'en',
   });
 
-  const [appSettings, setAppSettings] = useState<AppSettingsAPIResponse<Co>>();
-  const [channel, setChannel] = useState<Channel<At, Ch, Co, Ev, Me, Re, Us>>();
-  const [mutes, setMutes] = useState<Array<Mute<Us>>>([]);
+  const [channel, setChannel] = useState<Channel<StreamChatGenerics>>();
+  const [mutes, setMutes] = useState<Array<Mute<StreamChatGenerics>>>([]);
   const [navOpen, setNavOpen] = useState(initialNavOpen);
+  const [latestMessageDatesByChannels, setLatestMessageDatesByChannels] = useState({});
 
-  const clientMutes = client.user?.mutes;
+  const clientMutes = (client.user?.mutes as Array<Mute<StreamChatGenerics>>) || [];
 
   const closeMobileNav = () => setNavOpen(false);
   const openMobileNav = () => setTimeout(() => setNavOpen(true), 100);
 
-  useEffect(() => {
-    const setAgentAndSettings = async () => {
-      const userAgent = client.getUserAgent();
-      if (!userAgent.includes('stream-chat-react')) {
-        // result looks like: 'stream-chat-react-2.3.2-stream-chat-javascript-client-browser-2.2.2'
-        client.setUserAgent(`stream-chat-react-${version}-${userAgent}`);
-      }
+  const appSettings = useRef<Promise<AppSettingsAPIResponse<StreamChatGenerics>> | null>(
+    null,
+  );
 
-      try {
-        const settingsResponse = await client.getAppSettings();
-        setAppSettings(settingsResponse);
-      } catch (err) {
-        setAppSettings(undefined);
-      }
+  const getAppSettings = () => {
+    if (appSettings.current) {
+      return appSettings.current;
+    }
+    appSettings.current = client.getAppSettings();
+    return appSettings.current;
+  };
+
+  useEffect(() => {
+    if (!client) return;
+
+    const userAgent = client.getUserAgent();
+    if (!userAgent.includes('stream-chat-react')) {
+      // result looks like: 'stream-chat-react-2.3.2-stream-chat-javascript-client-browser-2.2.2'
+      // the upper-case text between double underscores is replaced with the actual semantic version of the library
+      client.setUserAgent(`stream-chat-react-__STREAM_CHAT_REACT_VERSION__-${userAgent}`);
+    }
+
+    client.threads.registerSubscriptions();
+    client.polls.registerSubscriptions();
+
+    return () => {
+      client.threads.unregisterSubscriptions();
+      client.polls.unregisterSubscriptions();
     };
-
-    setAgentAndSettings();
-  }, []);
+  }, [client]);
 
   useEffect(() => {
-    setMutes(clientMutes || []);
+    setMutes(clientMutes);
 
-    const handleEvent = (event: Event<At, Ch, Co, Ev, Me, Re, Us>) => {
+    const handleEvent = (event: Event<StreamChatGenerics>) => {
       setMutes(event.me?.mutes || []);
     };
 
     client.on('notification.mutes_updated', handleEvent);
     return () => client.off('notification.mutes_updated', handleEvent);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientMutes?.length]);
 
   useEffect(() => {
@@ -101,7 +99,9 @@ export const useChat = <
 
     if (!userLanguage) {
       const browserLanguage = window.navigator.language.slice(0, 2); // just get language code, not country-specific version
-      userLanguage = isLanguageSupported(browserLanguage) ? browserLanguage : defaultLanguage;
+      userLanguage = isLanguageSupported(browserLanguage)
+        ? browserLanguage
+        : defaultLanguage;
     }
 
     const streami18n = i18nInstance || new Streami18n({ language: userLanguage });
@@ -116,11 +116,12 @@ export const useChat = <
         userLanguage: userLanguage || defaultLanguage,
       });
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [i18nInstance]);
 
   const setActiveChannel = useCallback(
     async (
-      activeChannel?: Channel<At, Ch, Co, Ev, Me, Re, Us>,
+      activeChannel?: Channel<StreamChatGenerics>,
       watchers: { limit?: number; offset?: number } = {},
       event?: React.BaseSyntheticEvent,
     ) => {
@@ -136,10 +137,15 @@ export const useChat = <
     [],
   );
 
+  useEffect(() => {
+    setLatestMessageDatesByChannels({});
+  }, [client.user?.id]);
+
   return {
-    appSettings,
     channel,
     closeMobileNav,
+    getAppSettings,
+    latestMessageDatesByChannels,
     mutes,
     navOpen,
     openMobileNav,

@@ -2,83 +2,37 @@ import React from 'react';
 
 import { useTranslationContext } from '../../context/TranslationContext';
 
-import type { ChannelOrUserResponse } from './utils';
-
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
-
-export type ChannelSearchFunctionParams<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
-  setQuery: React.Dispatch<React.SetStateAction<string>>;
-  setResults: React.Dispatch<
-    React.SetStateAction<Array<ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>>>
-  >;
-  setResultsOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setSearching: React.Dispatch<React.SetStateAction<boolean>>;
-};
-
-export type SearchInputProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
-  channelSearchParams: {
-    setQuery: React.Dispatch<React.SetStateAction<string>>;
-    setResults: React.Dispatch<
-      React.SetStateAction<ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>[]>
-    >;
-    setResultsOpen: React.Dispatch<React.SetStateAction<boolean>>;
-    setSearching: React.Dispatch<React.SetStateAction<boolean>>;
-  };
-  inputRef: React.RefObject<HTMLInputElement>;
-  onSearch: (event: React.BaseSyntheticEvent) => void;
+export type SearchInputController = {
+  /** Clears the channel search state */
+  clearState: () => void;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  /** Search input change handler */
+  onSearch: React.ChangeEventHandler<HTMLInputElement>;
+  /** Current search string */
   query: string;
-  searchFunction?: (
-    params: ChannelSearchFunctionParams<At, Ch, Co, Ev, Me, Re, Us>,
-    event: React.BaseSyntheticEvent,
-  ) => Promise<void> | void;
 };
 
-export const SearchInput = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
->(
-  props: SearchInputProps<At, Ch, Co, Ev, Me, Re, Us>,
-) => {
-  const { channelSearchParams, inputRef, onSearch, query, searchFunction } = props;
+export type AdditionalSearchInputProps = {
+  /** Sets the input element into disabled state */
+  disabled?: boolean;
+  /** Custom placeholder text to be displayed in the search input */
+  placeholder?: string;
+};
+
+export type SearchInputProps = AdditionalSearchInputProps & SearchInputController;
+
+export const SearchInput = (props: SearchInputProps) => {
+  const { disabled, inputRef, onSearch, placeholder, query } = props;
 
   const { t } = useTranslationContext('SearchInput');
 
   return (
     <input
       className='str-chat__channel-search-input'
-      onChange={(event: React.BaseSyntheticEvent) =>
-        searchFunction ? searchFunction(channelSearchParams, event) : onSearch(event)
-      }
-      placeholder={t('Search')}
+      data-testid='search-input'
+      disabled={disabled}
+      onChange={onSearch}
+      placeholder={placeholder ?? t('Search')}
       ref={inputRef}
       type='text'
       value={query}

@@ -2,20 +2,27 @@ import React, { useCallback } from 'react';
 
 import type { UserResponse } from 'stream-chat';
 
-import type { DefaultUserType } from '../../../types/types';
+import type { DefaultStreamChatGenerics } from '../../../types/types';
 
-export type OnMentionAction<Us extends DefaultUserType<Us> = DefaultUserType> = (
-  event: React.BaseSyntheticEvent,
-  user?: UserResponse<Us>,
-) => void;
+export type OnMentionAction<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = (event: React.BaseSyntheticEvent, user?: UserResponse<StreamChatGenerics>) => void;
 
-export const useMentionsHandlers = <Us extends DefaultUserType<Us> = DefaultUserType>(
-  onMentionsHover?: OnMentionAction<Us>,
-  onMentionsClick?: OnMentionAction<Us>,
+export const useMentionsHandlers = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>(
+  onMentionsHover?: OnMentionAction<StreamChatGenerics>,
+  onMentionsClick?: OnMentionAction<StreamChatGenerics>,
 ) =>
   useCallback(
-    (event: React.BaseSyntheticEvent, mentioned_users: UserResponse<Us>[]) => {
-      if ((!onMentionsHover && !onMentionsClick) || !(event.target instanceof HTMLElement)) {
+    (
+      event: React.BaseSyntheticEvent,
+      mentioned_users: UserResponse<StreamChatGenerics>[],
+    ) => {
+      if (
+        (!onMentionsHover && !onMentionsClick) ||
+        !(event.target instanceof HTMLElement)
+      ) {
         return;
       }
 
@@ -24,7 +31,9 @@ export const useMentionsHandlers = <Us extends DefaultUserType<Us> = DefaultUser
 
       if (textContent[0] === '@') {
         const userName = textContent.replace('@', '');
-        const user = mentioned_users?.find(({ id, name }) => name === userName || id === userName);
+        const user = mentioned_users?.find(
+          ({ id, name }) => name === userName || id === userName,
+        );
 
         if (
           onMentionsHover &&
@@ -34,7 +43,11 @@ export const useMentionsHandlers = <Us extends DefaultUserType<Us> = DefaultUser
           onMentionsHover(event, user);
         }
 
-        if (onMentionsClick && event.type === 'click' && typeof onMentionsClick === 'function') {
+        if (
+          onMentionsClick &&
+          event.type === 'click' &&
+          typeof onMentionsClick === 'function'
+        ) {
           onMentionsClick(event, user);
         }
       }

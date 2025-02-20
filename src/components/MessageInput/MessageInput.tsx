@@ -1,44 +1,64 @@
-import React from 'react';
+import React, { PropsWithChildren } from 'react';
 
 import { DefaultTriggerProvider } from './DefaultTriggerProvider';
 import { MessageInputFlat } from './MessageInputFlat';
-
 import { useCooldownTimer } from './hooks/useCooldownTimer';
 import { useCreateMessageInputContext } from './hooks/useCreateMessageInputContext';
 import { useMessageInputState } from './hooks/useMessageInputState';
+import { StreamMessage, useChannelStateContext } from '../../context/ChannelStateContext';
+import {
+  ComponentContextValue,
+  useComponentContext,
+} from '../../context/ComponentContext';
 import { MessageInputContextProvider } from '../../context/MessageInputContext';
-import { useComponentContext } from '../../context/ComponentContext';
+import { DialogManagerProvider } from '../../context';
 
-import type { Channel, SendFileAPIResponse } from 'stream-chat';
+import type { Channel, Message, SendFileAPIResponse } from 'stream-chat';
 
-import type { FileUpload, ImageUpload } from './hooks/useMessageInputState';
-import type { SearchQueryParams } from '../ChannelSearch/ChannelSearch';
+import type { BaseLocalAttachmentMetadata, LocalAttachmentUploadMetadata } from './types';
+import type { SearchQueryParams } from '../ChannelSearch/hooks/useChannelSearch';
 import type { MessageToSend } from '../../context/ChannelActionContext';
-import type { StreamMessage } from '../../context/ChannelStateContext';
-
 import type {
   CustomTrigger,
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
+  DefaultStreamChatGenerics,
+  SendMessageOptions,
+  UnknownType,
 } from '../../types/types';
+import type { URLEnrichmentConfig } from './hooks/useLinkPreviews';
+import type { CustomAudioRecordingConfig } from '../MediaRecorder';
+
+export type EmojiSearchIndexResult = {
+  id: string;
+  name: string;
+  skins: Array<{ native: string }>;
+  emoticons?: Array<string>;
+  native?: string;
+};
+
+export interface EmojiSearchIndex<T extends UnknownType = UnknownType> {
+  search: (
+    query: string,
+  ) =>
+    | PromiseLike<Array<EmojiSearchIndexResult & T>>
+    | Array<EmojiSearchIndexResult & T>
+    | null;
+}
 
 export type MessageInputProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType,
-  V extends CustomTrigger = CustomTrigger
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
 > = {
   /** Additional props to be passed to the underlying `AutoCompleteTextarea` component, [available props](https://www.npmjs.com/package/react-textarea-autosize) */
   additionalTextareaProps?: React.TextareaHTMLAttributes<HTMLTextAreaElement>;
+  /**
+   * When enabled, recorded messages won’t be sent immediately.
+   * Instead, they will “stack up” with other attachments in the message composer allowing the user to send multiple attachments as part of the same message.
+   */
+  asyncMessagesMultiSendEnabled?: boolean;
+  /** Allows to configure the audio recording parameters for voice messages. */
+  audioRecordingConfig?: CustomAudioRecordingConfig;
+  /** Controls whether the users will be provided with the UI to record voice messages. */
+  audioRecordingEnabled?: boolean;
   /** Function to clear the editing state while editing a message */
   clearEditingState?: () => void;
   /** If true, disables the text input */
@@ -47,103 +67,137 @@ export type MessageInputProps<
   disableMentions?: boolean;
   /** Function to override the default file upload request */
   doFileUploadRequest?: (
-    file: FileUpload['file'],
-    channel: Channel<At, Ch, Co, Ev, Me, Re, Us>,
+    file: LocalAttachmentUploadMetadata['file'],
+    channel: Channel<StreamChatGenerics>,
   ) => Promise<SendFileAPIResponse>;
   /** Function to override the default image upload request */
   doImageUploadRequest?: (
-    file: ImageUpload['file'],
-    channel: Channel<At, Ch, Co, Ev, Me, Re, Us>,
+    file: LocalAttachmentUploadMetadata['file'],
+    channel: Channel<StreamChatGenerics>,
   ) => Promise<SendFileAPIResponse>;
+  /** Mechanism to be used with autocomplete and text replace features of the `MessageInput` component, see [emoji-mart `SearchIndex`](https://github.com/missive/emoji-mart#%EF%B8%8F%EF%B8%8F-headless-search) */
+  emojiSearchIndex?: ComponentContextValue['emojiSearchIndex'];
   /** Custom error handler function to be called with a file/image upload fails */
   errorHandler?: (
     error: Error,
     type: string,
-    file: (FileUpload | ImageUpload)['file'] & { id?: string },
+    file: LocalAttachmentUploadMetadata['file'] & BaseLocalAttachmentMetadata,
   ) => void;
   /** If true, focuses the text input on component mount */
   focus?: boolean;
+  /** Generates the default value for the underlying textarea element. The function's return value takes precedence before additionalTextareaProps.defaultValue. */
+  getDefaultValue?: () => string | string[];
   /** If true, expands the text input vertically for new lines */
   grow?: boolean;
+  /** Allows to hide MessageInput's send button. */
+  hideSendButton?: boolean;
   /** Custom UI component handling how the message input is rendered, defaults to and accepts the same props as [MessageInputFlat](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageInput/MessageInputFlat.tsx) */
-  Input?: React.ComponentType<MessageInputProps<At, Ch, Co, Ev, Me, Re, Us, V>>;
-  /**
-   * Currently, Enter is the default submission key and Shift+Enter is the default for new line.
-   * If provided, this array of keycode numbers will override the default Enter for submission, and Enter will then only create a new line.
-   * Shift + Enter will still always create a new line, unless Shift+Enter [16, 13] is included in the override.
-   * e.g.: [[16,13], [57], [48]] - submission keys would then be Shift+Enter, 9, and 0.
-   * */
-  keycodeSubmitKeys?: Array<number[]>;
+  Input?: React.ComponentType<MessageInputProps<StreamChatGenerics, V>>;
+  /** Signals that the MessageInput is rendered in a message thread (Thread component) */
+  isThreadInput?: boolean;
   /** Max number of rows the underlying `textarea` component is allowed to grow */
   maxRows?: number;
   /** If true, the suggestion list will search all app users for an @mention, not just current channel members/watchers. Default: false. */
   mentionAllAppUsers?: boolean;
   /** Object containing filters/sort/options overrides for an @mention user query */
-  mentionQueryParams?: SearchQueryParams<Us>['userFilters'];
+  mentionQueryParams?: SearchQueryParams<StreamChatGenerics>['userFilters'];
   /** If provided, the existing message will be edited on submit */
-  message?: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>;
+  message?: StreamMessage<StreamChatGenerics>;
+  /** Min number of rows the underlying `textarea` will start with. The `grow` on MessageInput prop has to be enabled for `minRows` to take effect. */
+  minRows?: number;
   /** If true, disables file uploads for all attachments except for those with type 'image'. Default: false */
   noFiles?: boolean;
   /** Function to override the default submit handler */
   overrideSubmitHandler?: (
-    message: MessageToSend<At, Ch, Co, Ev, Me, Re, Us>,
+    message: MessageToSend<StreamChatGenerics>,
     channelCid: string,
-  ) => void;
+    customMessageData?: Partial<Message<StreamChatGenerics>>,
+    options?: SendMessageOptions,
+  ) => Promise<void> | void;
   /** When replying in a thread, the parent message object */
-  parent?: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>;
+  parent?: StreamMessage<StreamChatGenerics>;
   /** If true, triggers typing events on text input keystroke */
   publishTypingEvent?: boolean;
-  /** If true, will use an optional dependency to support transliteration in the input for mentions, default is false. See: https://github.com/sindresorhus/transliterate */
+  /** If true, will use an optional dependency to support transliteration in the input for mentions, default is false. See: https://github.com/getstream/transliterate */
+  /**
+   * Currently, `Enter` is the default submission key and  `Shift`+`Enter` is the default combination for the new line.
+   * If specified, this function overrides the default behavior specified previously.
+   *
+   * Example of default behaviour:
+   * ```tsx
+   * const defaultShouldSubmit = (event) => event.key === "Enter" && !event.shiftKey;
+   * ```
+   */
+  shouldSubmit?: (event: KeyboardEvent) => boolean;
+  /** Configuration parameters for link previews. */
+  urlEnrichmentConfig?: URLEnrichmentConfig;
   useMentionsTransliteration?: boolean;
 };
 
-const UnMemoizedMessageInput = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType,
-  V extends CustomTrigger = CustomTrigger
+const MessageInputProvider = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
 >(
-  props: MessageInputProps<At, Ch, Co, Ev, Me, Re, Us, V>,
+  props: PropsWithChildren<MessageInputProps<StreamChatGenerics, V>>,
 ) => {
-  const { Input: PropInput } = props;
+  const cooldownTimerState = useCooldownTimer<StreamChatGenerics>();
+  const messageInputState = useMessageInputState<StreamChatGenerics, V>(props);
+  const { emojiSearchIndex } = useComponentContext('MessageInput');
 
-  const { Input: ContextInput, TriggerProvider = DefaultTriggerProvider } = useComponentContext<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us,
-    V
-  >('MessageInput');
-
-  const Input = PropInput || ContextInput || MessageInputFlat;
-
-  const messageInputState = useMessageInputState<At, Ch, Co, Ev, Me, Re, Us, V>(props);
-
-  const cooldownTimerState = useCooldownTimer<At, Ch, Co, Ev, Me, Re, Us>();
-
-  const messageInputContextValue = useCreateMessageInputContext<At, Ch, Co, Ev, Me, Re, Us, V>({
+  const messageInputContextValue = useCreateMessageInputContext<StreamChatGenerics, V>({
     ...cooldownTimerState,
     ...messageInputState,
     ...props,
+    emojiSearchIndex: props.emojiSearchIndex ?? emojiSearchIndex,
   });
 
   return (
-    <MessageInputContextProvider<At, Ch, Co, Ev, Me, Re, Us, V> value={messageInputContextValue}>
-      <TriggerProvider<At, Ch, Co, Ev, Me, Re, Us, V>>
-        <Input />
-      </TriggerProvider>
+    <MessageInputContextProvider<StreamChatGenerics, V> value={messageInputContextValue}>
+      {props.children}
     </MessageInputContextProvider>
+  );
+};
+
+const UnMemoizedMessageInput = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
+>(
+  props: MessageInputProps<StreamChatGenerics, V>,
+) => {
+  const { Input: PropInput } = props;
+
+  const { dragAndDropWindow } = useChannelStateContext<StreamChatGenerics>();
+  const { Input: ContextInput, TriggerProvider = DefaultTriggerProvider } =
+    useComponentContext<StreamChatGenerics, V>('MessageInput');
+
+  const Input = PropInput || ContextInput || MessageInputFlat;
+  const dialogManagerId = props.isThreadInput
+    ? 'message-input-dialog-manager-thread'
+    : 'message-input-dialog-manager';
+
+  if (dragAndDropWindow)
+    return (
+      <DialogManagerProvider id={dialogManagerId}>
+        <TriggerProvider>
+          <Input />
+        </TriggerProvider>
+      </DialogManagerProvider>
+    );
+
+  return (
+    <DialogManagerProvider id={dialogManagerId}>
+      <MessageInputProvider {...props}>
+        <TriggerProvider>
+          <Input />
+        </TriggerProvider>
+      </MessageInputProvider>
+    </DialogManagerProvider>
   );
 };
 
 /**
  * A high level component that has provides all functionality to the Input it renders.
  */
-export const MessageInput = React.memo(UnMemoizedMessageInput) as typeof UnMemoizedMessageInput;
+export const MessageInput = React.memo(
+  UnMemoizedMessageInput,
+) as typeof UnMemoizedMessageInput;

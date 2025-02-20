@@ -1,5 +1,5 @@
 import React, { useContext, useEffect } from 'react';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 import { ChatAutoComplete } from '../ChatAutoComplete';
@@ -35,12 +35,25 @@ const ActiveChannelSetter = ({ activeChannel }) => {
   return null;
 };
 
+const searchIndexMock = {
+  search: () => [
+    {
+      emoticons: [':D'],
+      id: 'smile',
+      name: 'Smile',
+      native: '😄',
+      skins: [],
+    },
+  ],
+};
+
 const renderComponent = async (
   props = {},
   messageInputContextOverrides = {},
   activeChannel = channel,
 ) => {
-  const placeholderText = props.placeholder || 'placeholder';
+  const placeholderText =
+    props.placeholder === null ? null : props.placeholder || 'placeholder';
 
   const OverrideMessageInputContext = ({ children }) => {
     const currentContext = useMessageInputContext();
@@ -49,7 +62,9 @@ const renderComponent = async (
       ...messageInputContextOverrides,
     };
     return (
-      <MessageInputContextProvider value={withOverrides}>{children}</MessageInputContextProvider>
+      <MessageInputContextProvider value={withOverrides}>
+        {children}
+      </MessageInputContextProvider>
     );
   };
 
@@ -58,24 +73,32 @@ const renderComponent = async (
       <ChatAutoComplete {...props} placeholder={placeholderText} />
     </OverrideMessageInputContext>
   );
+  let renderResult;
+  await act(() => {
+    renderResult = render(
+      <Chat client={chatClient}>
+        <ActiveChannelSetter activeChannel={activeChannel} />
+        <Channel>
+          <MessageInput emojiSearchIndex={searchIndexMock} Input={AutoComplete} />
+        </Channel>
+      </Chat>,
+    );
+  });
 
-  const renderResult = render(
-    <Chat client={chatClient}>
-      <ActiveChannelSetter activeChannel={activeChannel} />
-      <Channel>
-        <MessageInput Input={AutoComplete} />
-      </Channel>
-    </Chat>,
-  );
-  const textarea = await waitFor(() => renderResult.getByPlaceholderText(placeholderText));
-  const typeText = (text) => {
-    fireEvent.change(textarea, {
-      target: {
-        selectionEnd: text.length,
-        value: text,
-      },
-    });
-  };
+  let textarea;
+  let typeText;
+  if (placeholderText !== null) {
+    textarea = await waitFor(() => renderResult.getByPlaceholderText(placeholderText));
+
+    typeText = (text) => {
+      fireEvent.change(textarea, {
+        target: {
+          selectionEnd: text.length,
+          value: text,
+        },
+      });
+    };
+  }
   return { ...renderResult, textarea, typeText };
 };
 
@@ -83,13 +106,13 @@ describe('ChatAutoComplete', () => {
   beforeEach(async () => {
     const messages = [generateMessage({ user })];
     const members = [generateMember({ user }), generateMember({ user: mentionUser })];
-    const mockedChannel = generateChannel({
+    const mockedChannelData = generateChannel({
       members,
       messages,
     });
     chatClient = await getTestClientWithUser(user);
-    useMockedApis(chatClient, [getOrCreateChannelApi(mockedChannel)]);
-    channel = chatClient.channel('messaging', mockedChannel.id);
+    useMockedApis(chatClient, [getOrCreateChannelApi(mockedChannelData)]);
+    channel = chatClient.channel('messaging', mockedChannelData.channel.id);
   });
 
   afterEach(cleanup);
@@ -120,31 +143,52 @@ describe('ChatAutoComplete', () => {
     expect(textarea).toBeDisabled();
   });
 
+  it('should give preference to prop disabled over the MessageInputContext value', async () => {
+    const { textarea } = await renderComponent({ disabled: false }, { disabled: true });
+
+    expect(textarea).toBeEnabled();
+  });
+
+  it('should give preference to cooldown value over the prop disabled', async () => {
+    await renderComponent(
+      { disabled: false, placeholder: null },
+      { cooldownRemaining: 10 },
+    );
+    expect(screen.queryByPlaceholderText('Placeholder')).not.toBeInTheDocument();
+    const textarea = screen.getByTestId('message-input');
+    expect(textarea).toBeDisabled();
+    expect(textarea).toHaveProperty('placeholder', 'Slow Mode ON');
+  });
+
   it('should let you select emojis when you type :<emoji>', async () => {
     const emojiAutocompleteText = ':smile';
     const { findByText, textarea, typeText } = await renderComponent();
+
     typeText(emojiAutocompleteText);
+
     const emoji = await findByText('😄');
 
     expect(emoji).toBeInTheDocument();
 
     fireEvent.click(emoji);
 
-    expect(textarea.value).toContain('😄');
+    await waitFor(() => {
+      expect(textarea.value).toContain('😄');
+    });
   });
 
   it('should let you select users when you type @<username>', async () => {
     const onSelectItem = jest.fn();
     const userAutocompleteText = `@${mentionUser.name}`;
-    const { getAllByText, textarea, typeText } = await renderComponent({
+    const { textarea, typeText } = await renderComponent({
       onSelectItem,
     });
     typeText(userAutocompleteText);
-    const userText = await getAllByText(mentionUser.name);
+    const userText = await screen.getByText(mentionUser.name);
 
-    expect(userText).toHaveLength(2);
+    expect(userText).toBeInTheDocument();
 
-    fireEvent.click(userText[1]);
+    fireEvent.click(userText);
 
     expect(textarea.value).toContain(mentionUser.name);
   });
@@ -198,14 +242,36 @@ describe('ChatAutoComplete', () => {
     typeText(userAutocompleteText);
     const userText = await queryAllByText(user.name);
 
-    // eslint-disable-next-line jest-dom/prefer-in-document
     expect(userText).toHaveLength(0);
+  });
+
+  it('should disable popup list when the input is in "isComposing" state', async () => {
+    const { typeText } = await renderComponent();
+
+    const messageInput = await screen.findByTestId('message-input');
+
+    act(() => {
+      const cStartEvent = new Event('compositionstart', { bubbles: true });
+      messageInput.dispatchEvent(cStartEvent);
+    });
+
+    const userAutocompleteText = `@${user.name}`;
+    typeText(userAutocompleteText);
+
+    expect(screen.queryByText(user.name)).not.toBeInTheDocument();
+
+    act(() => {
+      const cEndEvent = new Event('compositionend', { bubbles: true });
+      messageInput.dispatchEvent(cEndEvent);
+    });
+
+    expect(await screen.findByText(user.name)).toBeInTheDocument();
   });
 
   it('should use the queryMembers API for mentions if a channel has many members', async () => {
     const users = Array(100).fill().map(generateUser);
     const members = users.map((u) => generateMember({ user: u }));
-    const messages = [generateMessage({ user: users[0] })];
+    const messages = [generateMessage({ user: users[1] })];
     const mockedChannel = generateChannel({
       members,
       messages,
@@ -217,12 +283,16 @@ describe('ChatAutoComplete', () => {
     const { findByText, textarea, typeText } = await renderComponent();
     const mentionedUser = searchMember.user;
 
-    typeText(`@${mentionedUser.id}`);
+    await act(() => {
+      typeText(`@${mentionedUser.id}`);
+    });
 
     const userText = await findByText(mentionedUser.name);
     expect(userText).toBeInTheDocument();
 
-    fireEvent.click(userText);
+    await act(() => {
+      fireEvent.click(userText);
+    });
     await waitFor(() => {
       expect(textarea.value).toContain(mentionedUser.name);
     });

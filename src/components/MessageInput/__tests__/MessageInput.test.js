@@ -1,211 +1,309 @@
-import React, { useEffect } from 'react';
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import React from 'react';
+import { SearchController } from 'stream-chat';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import { toHaveNoViolations } from 'jest-axe';
+import { axe } from '../../../../axe-helper';
+import { nanoid } from 'nanoid';
 
 import { MessageInput } from '../MessageInput';
 import { MessageInputFlat } from '../MessageInputFlat';
-import { MessageInputSmall } from '../MessageInputSmall';
 import { EditMessageForm } from '../EditMessageForm';
-
-import { Chat } from '../../Chat/Chat';
 import { Channel } from '../../Channel/Channel';
+import { MessageActionsBox } from '../../MessageActions';
 
-import { useChatContext } from '../../../context/ChatContext';
+import { MessageProvider } from '../../../context/MessageContext';
+import { useMessageInputContext } from '../../../context/MessageInputContext';
+import { ChatProvider } from '../../../context/ChatContext';
 import {
+  dispatchMessageDeletedEvent,
+  dispatchMessageUpdatedEvent,
   generateChannel,
   generateMember,
   generateMessage,
+  generateScrapedDataAttachment,
   generateUser,
-  getOrCreateChannelApi,
-  getTestClientWithUser,
-  useMockedApis,
+  initClientWithChannels,
 } from '../../../mock-builders';
+import { generatePoll } from '../../../mock-builders/generator/poll';
+import { QuotedMessagePreview } from '../QuotedMessagePreview';
 
-let chatClient;
-let channel;
+expect.extend(toHaveNoViolations);
+
+const IMAGE_PREVIEW_TEST_ID = 'attachment-preview-image';
+const FILE_PREVIEW_TEST_ID = 'attachment-preview-file';
+const FILE_INPUT_TEST_ID = 'file-input';
+const FILE_UPLOAD_RETRY_BTN_TEST_ID = 'file-preview-item-retry-button';
+const SEND_BTN_TEST_ID = 'send-button';
+const SEND_BTN_EDIT_FORM_TEST_ID = 'send-button-edit-form';
+const ATTACHMENT_PREVIEW_LIST_TEST_ID = 'attachment-list-scroll-container';
+const UNKNOWN_ATTACHMENT_PREVIEW_TEST_ID = 'attachment-preview-unknown';
+
+const inputPlaceholder = 'Type your message';
+const userId = 'userId';
+const username = 'username';
+const mentionId = 'mention-id';
+const mentionName = 'mention-name';
+const user = generateUser({ id: userId, name: username });
+const mentionUser = generateUser({
+  id: mentionId,
+  name: mentionName,
+});
+const mainListMessage = generateMessage({ user });
+const threadMessage = generateMessage({
+  parent_id: mainListMessage.id,
+  type: 'reply',
+  user,
+});
+const mockedChannelData = generateChannel({
+  channel: { own_capabilities: ['send-poll', 'upload-file'] },
+  members: [generateMember({ user }), generateMember({ user: mentionUser })],
+  messages: [mainListMessage],
+  thread: [threadMessage],
+});
+
+const defaultChatContext = {
+  channelsQueryState: { queryInProgress: 'uninitialized' },
+  getAppSettings: jest.fn(),
+  latestMessageDatesByChannels: {},
+  mutes: [],
+  searchController: new SearchController(),
+};
+
+const cooldown = 30;
+const filename = 'some.txt';
+const fileUploadUrl = 'http://www.getstream.io'; // real url, because ImageAttachmentPreview will try to load the image
+
+const getImage = () => new File(['content'], filename, { type: 'image/png' });
+const getFile = (name = filename) => new File(['content'], name, { type: 'text/plain' });
+
+const mockUploadApi = () =>
+  jest.fn().mockImplementation(() =>
+    Promise.resolve({
+      file: fileUploadUrl,
+    }),
+  );
+
+const mockFaultyUploadApi = (cause) =>
+  jest.fn().mockImplementation(() => Promise.reject(cause));
 
 const submitMock = jest.fn();
 const editMock = jest.fn();
+const mockAddNotification = jest.fn();
 
-const ActiveChannelSetter = ({ activeChannel }) => {
-  const { setActiveChannel } = useChatContext();
-  useEffect(() => {
-    setActiveChannel(activeChannel);
-  });
-  return null;
+jest.mock('../../Channel/utils', () => ({
+  makeAddNotifications: () => mockAddNotification,
+}));
+
+const defaultMessageContextValue = {
+  getMessageActions: () => ['delete', 'edit', 'quote'],
+  handleDelete: () => {},
+  handleFlag: () => {},
+  handleMute: () => {},
+  handlePin: () => {},
+  isMyMessage: () => true,
+  message: mainListMessage,
+  setEditingState: () => {},
 };
 
-[
-  { InputComponent: MessageInputSmall, name: 'MessageInputSmall' },
-  { InputComponent: MessageInputFlat, name: 'MessageInputFlat' },
-  { InputComponent: EditMessageForm, name: 'EditMessageForm' },
-].forEach(({ InputComponent, name: componentName }) => {
-  const renderComponent = (props = {}, channelProps = {}) => {
-    const renderResult = render(
-      <Chat client={chatClient}>
-        <ActiveChannelSetter activeChannel={channel} />
-        <Channel
-          doSendMessageRequest={submitMock}
-          doUpdateMessageRequest={editMock}
-          {...channelProps}
+function dropFile(file, formElement) {
+  fireEvent.drop(formElement, {
+    dataTransfer: {
+      files: [file],
+      types: ['Files'],
+    },
+  });
+}
+
+const makeRenderFn =
+  (InputComponent) =>
+  async ({
+    channelData = [],
+    channelProps = {},
+    chatContextOverrides = {},
+    customChannel,
+    customClient,
+    customUser,
+    messageActionsBoxProps = {},
+    messageContextOverrides = {},
+    messageInputProps = {},
+  } = {}) => {
+    let channel = customChannel;
+    let client = customClient;
+    if (!(channel || client)) {
+      const result = await initClientWithChannels({
+        channelsData: [{ ...mockedChannelData, ...channelData }],
+        customUser: customUser || user,
+      });
+      channel = result.channels[0];
+      client = result.client;
+    }
+    let renderResult;
+
+    const defaultMessageInputProps =
+      InputComponent.name === 'EditMessageForm' ? { message: mainListMessage } : {};
+    await act(() => {
+      renderResult = render(
+        <ChatProvider
+          value={{ ...defaultChatContext, channel, client, ...chatContextOverrides }}
         >
-          <MessageInput Input={InputComponent} {...props} />
-        </Channel>
-      </Chat>,
-    );
+          <Channel
+            doSendMessageRequest={submitMock}
+            doUpdateMessageRequest={editMock}
+            {...channelProps}
+          >
+            <MessageProvider
+              value={{ ...defaultMessageContextValue, ...messageContextOverrides }}
+            >
+              <MessageActionsBox
+                {...messageActionsBoxProps}
+                getMessageActions={defaultMessageContextValue.getMessageActions}
+              />
+            </MessageProvider>
+            <MessageInput
+              Input={InputComponent}
+              {...{ ...defaultMessageInputProps, ...messageInputProps }}
+            />
+          </Channel>
+        </ChatProvider>,
+      );
+    });
 
     const submit = async () => {
-      const submitButton = renderResult.findByText('Send') || renderResult.findByTitle('Send');
+      const submitButton =
+        renderResult.queryByTestId(SEND_BTN_EDIT_FORM_TEST_ID) ||
+        renderResult.findByText('Send') ||
+        renderResult.findByTitle('Send');
       fireEvent.click(await submitButton);
     };
 
-    return { submit, ...renderResult };
+    return { channel, client, submit, ...renderResult };
   };
 
+const tearDown = () => {
+  cleanup();
+  jest.clearAllMocks();
+};
+
+function axeNoViolations(container) {
+  return async () => {
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
+  };
+}
+
+[
+  { InputComponent: MessageInputFlat, name: 'MessageInputFlat' },
+  { InputComponent: EditMessageForm, name: 'EditMessageForm' },
+].forEach(({ InputComponent, name: componentName }) => {
+  const renderComponent = makeRenderFn(InputComponent);
+
   describe(`${componentName}`, () => {
-    const inputPlaceholder = 'Type your message';
-    const userId = 'userId';
-    const username = 'username';
-    const mentionId = 'mention-id';
-    const mentionName = 'mention-name';
+    afterEach(tearDown);
 
-    // First, set up a client and channel, so we can properly set up the context etc.
-    beforeAll(async () => {
-      const user1 = generateUser({ id: userId, name: username });
-      const mentionUser = generateUser({
-        id: mentionId,
-        name: mentionName,
+    it('should render custom EmojiPicker', async () => {
+      const CustomEmojiPicker = () => <div data-testid='custom-emoji-picker' />;
+
+      await renderComponent({ channelProps: { EmojiPicker: CustomEmojiPicker } });
+
+      await waitFor(() => {
+        const c = screen.getByTestId('custom-emoji-picker');
+        expect(c).toBeInTheDocument();
       });
-      const message1 = generateMessage({ user: user1 });
-      const mockedChannel = generateChannel({
-        members: [generateMember({ user: user1 }), generateMember({ user: mentionUser })],
-        messages: [message1],
-      });
-      chatClient = await getTestClientWithUser({ id: user1.id });
-      useMockedApis(chatClient, [getOrCreateChannelApi(mockedChannel)]);
-      channel = chatClient.channel('messaging', mockedChannel.id);
     });
 
-    afterEach(() => {
-      cleanup();
-      jest.clearAllMocks();
+    it('should contain placeholder text if no default message text provided', async () => {
+      await renderComponent({ messageInputProps: { message: { text: '' } } });
+      await waitFor(() => {
+        const textarea = screen.getByPlaceholderText(inputPlaceholder);
+        expect(textarea).toBeInTheDocument();
+        expect(textarea.value).toBe('');
+      });
     });
 
-    function dropFile(file, formElement) {
-      fireEvent.drop(formElement, {
-        dataTransfer: {
-          files: [file],
-          types: ['Files'],
+    it('should shift focus to the textarea if the `focus` prop is true', async () => {
+      const { container } = await renderComponent({
+        messageInputProps: {
+          focus: true,
         },
       });
-    }
-
-    const filename = 'some.txt';
-    const fileUploadUrl = 'http://www.getstream.io'; // real url, because ImagePreview will try to load the image
-
-    const getImage = () => new File(['content'], filename, { type: 'image/png' });
-    const getFile = (name = filename) => new File(['content'], name, { type: 'text/plain' });
-
-    const mockUploadApi = () =>
-      jest.fn().mockImplementation(() =>
-        Promise.resolve({
-          file: fileUploadUrl,
-        }),
-      );
-
-    const mockFaultyUploadApi = (cause) =>
-      jest.fn().mockImplementation(() => Promise.reject(cause));
-
-    it('Should shift focus to the textarea if the `focus` prop is true', async () => {
-      const { getByPlaceholderText } = renderComponent({
-        focus: true,
-      });
       await waitFor(() => {
-        expect(getByPlaceholderText(inputPlaceholder)).toHaveFocus();
+        expect(screen.getByPlaceholderText(inputPlaceholder)).toHaveFocus();
       });
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
 
-    it('Should render default emoji svg', async () => {
-      const { findByTitle } = renderComponent();
-      const emojiIcon = await findByTitle('Open emoji picker');
-
-      await waitFor(() => {
-        expect(emojiIcon).toBeInTheDocument();
-      });
-    });
-
-    it('Should render custom emoji svg provided as prop', async () => {
-      const EmojiIcon = () => (
-        <svg>
-          <title>NotEmoji</title>
-        </svg>
-      );
-
-      const { findByTitle } = renderComponent({}, { EmojiIcon });
-
-      const emojiIcon = await findByTitle('NotEmoji');
-
-      await waitFor(() => {
-        expect(emojiIcon).toBeInTheDocument();
-      });
-    });
-
-    it('Should render default file upload icon', async () => {
-      const { findByTitle } = renderComponent();
-      const fileUploadIcon = await findByTitle('Attach files');
+    it('should render default file upload icon', async () => {
+      const { container } = await renderComponent();
+      const fileUploadIcon =
+        componentName === 'EditMessageForm'
+          ? await screen.findByTitle('Attach files')
+          : await screen.getByTestId('invoke-attachment-selector-button');
 
       await waitFor(() => {
         expect(fileUploadIcon).toBeInTheDocument();
       });
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
 
-    it('Should render custom file upload svg provided as prop', async () => {
+    it('should render custom file upload svg provided as prop', async () => {
       const FileUploadIcon = () => (
         <svg>
           <title>NotFileUploadIcon</title>
         </svg>
       );
 
-      const { findByTitle } = renderComponent({}, { FileUploadIcon });
+      const { container } = await renderComponent({ channelProps: { FileUploadIcon } });
 
-      const fileUploadIcon = await findByTitle('NotFileUploadIcon');
+      const fileUploadIcon = await screen.findByTitle('NotFileUploadIcon');
 
       await waitFor(() => {
         expect(fileUploadIcon).toBeInTheDocument();
       });
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
 
-    it('Should open the emoji picker after clicking the icon, and allow adding emojis to the message', async () => {
-      const { container, findByTitle, getByDisplayValue, queryAllByText } = renderComponent();
+    it('should prefer custom AttachmentSelectorInitiationButtonContents before custom FileUploadIcon', async () => {
+      const FileUploadIcon = () => (
+        <svg>
+          <title>NotFileUploadIcon</title>
+        </svg>
+      );
 
-      const emojiIcon = await findByTitle('Open emoji picker');
-      fireEvent.click(emojiIcon);
+      const AttachmentSelectorInitiationButtonContents = () => (
+        <svg>
+          <title>AttachmentSelectorInitiationButtonContents</title>
+        </svg>
+      );
 
-      await waitFor(() => {
-        expect(container.querySelector('.emoji-mart')).toBeInTheDocument();
+      const { container } = await renderComponent({
+        channelProps: { AttachmentSelectorInitiationButtonContents, FileUploadIcon },
       });
 
-      const emoji = '💯';
-      const emojiButton = queryAllByText(emoji)[0];
-      expect(emojiButton).toBeInTheDocument();
-
-      fireEvent.click(emojiButton);
-
-      // expect input to have emoji as value
-      expect(getByDisplayValue(emoji)).toBeInTheDocument();
-
-      // close picker
-      fireEvent.click(container);
-      expect(container.querySelector('.emoji-mart')).not.toBeInTheDocument();
+      const fileUploadIcon = await screen.queryByTitle('NotFileUploadIcon');
+      const attachmentSelectorButtonIcon = await screen.getByTitle(
+        'AttachmentSelectorInitiationButtonContents',
+      );
+      await waitFor(() => {
+        expect(fileUploadIcon).not.toBeInTheDocument();
+        expect(attachmentSelectorButtonIcon).toBeInTheDocument();
+      });
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
 
     describe('Attachments', () => {
-      it('Pasting images and files should result in uploading the files and showing previewers', async () => {
+      it('Pasting images and files should result in uploading the files and showing previews', async () => {
         const doImageUploadRequest = mockUploadApi();
         const doFileUploadRequest = mockUploadApi();
-        const { findByPlaceholderText, findByText } = renderComponent({
-          doFileUploadRequest,
-          doImageUploadRequest,
+        const { container } = await renderComponent({
+          messageInputProps: {
+            doFileUploadRequest,
+            doImageUploadRequest,
+          },
         });
 
         const file = getFile();
@@ -227,203 +325,470 @@ const ActiveChannelSetter = ({ activeChannel }) => {
             },
           ],
         };
-        const formElement = await findByPlaceholderText(inputPlaceholder);
-        formElement.dispatchEvent(clipboardEvent);
-        const filenameText = await findByText(filename);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
+        act(() => {
+          formElement.dispatchEvent(clipboardEvent);
+        });
+        const filenameText = await screen.findByText(filename);
         await waitFor(() => {
           expect(doFileUploadRequest).toHaveBeenCalledWith(file, expect.any(Object));
-          expect(filenameText).toBeInTheDocument();
-          expect(filenameText.closest('a')).toHaveAttribute('href', fileUploadUrl);
           expect(doImageUploadRequest).toHaveBeenCalledWith(image, expect.any(Object));
+          expect(screen.getByTestId(IMAGE_PREVIEW_TEST_ID)).toBeInTheDocument();
+          expect(screen.getByTestId(FILE_PREVIEW_TEST_ID)).toBeInTheDocument();
+          expect(filenameText).toBeInTheDocument();
+          expect(screen.getByTestId(ATTACHMENT_PREVIEW_LIST_TEST_ID)).toBeInTheDocument();
         });
+
+        const results = await axe(container);
+        expect(results).toHaveNoViolations();
+      });
+
+      it('gives preference to pasting text over files', async () => {
+        const doImageUploadRequest = mockUploadApi();
+        const doFileUploadRequest = mockUploadApi();
+        const pastedString = 'pasted string';
+        const { container } = await renderComponent({
+          messageInputProps: {
+            doFileUploadRequest,
+            doImageUploadRequest,
+          },
+        });
+
+        const file = getFile();
+        const image = getImage();
+
+        const clipboardEvent = new Event('paste', {
+          bubbles: true,
+        });
+        // set `clipboardData`. Mock DataTransfer object
+        clipboardEvent.clipboardData = {
+          items: [
+            {
+              getAsFile: () => file,
+              kind: 'file',
+            },
+            {
+              getAsFile: () => image,
+              kind: 'file',
+            },
+            {
+              getAsString: (cb) => cb(pastedString),
+              kind: 'string',
+              type: 'text/plain',
+            },
+          ],
+        };
+        const formElement = screen.getByPlaceholderText(inputPlaceholder);
+        await act(async () => {
+          await formElement.dispatchEvent(clipboardEvent);
+        });
+
+        await waitFor(() => {
+          expect(doFileUploadRequest).not.toHaveBeenCalled();
+          expect(doImageUploadRequest).not.toHaveBeenCalled();
+          expect(screen.queryByTestId(IMAGE_PREVIEW_TEST_ID)).not.toBeInTheDocument();
+          expect(screen.queryByTestId(FILE_PREVIEW_TEST_ID)).not.toBeInTheDocument();
+          expect(screen.queryByText(filename)).not.toBeInTheDocument();
+          expect(
+            screen.queryByTestId(ATTACHMENT_PREVIEW_LIST_TEST_ID),
+          ).not.toBeInTheDocument();
+          if (componentName === 'EditMessageForm') {
+            expect(formElement.value.startsWith(pastedString)).toBeTruthy();
+          } else {
+            expect(formElement).toHaveValue(pastedString);
+          }
+        });
+
+        const results = await axe(container);
+        expect(results).toHaveNoViolations();
       });
 
       it('Should upload an image when it is dropped on the dropzone', async () => {
         const doImageUploadRequest = mockUploadApi();
-        const { findByPlaceholderText } = renderComponent({
-          doImageUploadRequest,
+        const { container } = await renderComponent({
+          messageInputProps: {
+            doImageUploadRequest,
+          },
         });
         // drop on the form input. Technically could be dropped just outside of it as well, but the input should always work.
-        const formElement = await findByPlaceholderText(inputPlaceholder);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
         const file = getImage();
-        dropFile(file, formElement);
-
+        await act(() => {
+          dropFile(file, formElement);
+        });
         await waitFor(() => {
           expect(doImageUploadRequest).toHaveBeenCalledWith(file, expect.any(Object));
         });
+        const results = await axe(container);
+        expect(results).toHaveNoViolations();
       });
 
       it('Should upload, display and link to a file when it is dropped on the dropzone', async () => {
-        const { findByPlaceholderText, findByText } = renderComponent({
-          doFileUploadRequest: mockUploadApi(),
+        const { container } = await renderComponent({
+          messageInputProps: {
+            doFileUploadRequest: mockUploadApi(),
+          },
         });
         // drop on the form input. Technically could be dropped just outside of it as well, but the input should always work.
-        const formElement = await findByPlaceholderText(inputPlaceholder);
-        dropFile(getFile(), formElement);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
 
-        const filenameText = await findByText(filename);
+        await act(() => {
+          dropFile(getFile(), formElement);
+        });
+
+        const filenameText = await screen.findByText(filename);
 
         expect(filenameText).toBeInTheDocument();
-        expect(filenameText.closest('a')).toHaveAttribute('href', fileUploadUrl);
+        const filePreview = screen.getByTestId(FILE_PREVIEW_TEST_ID);
+        await waitFor(() => {
+          expect(filePreview.querySelector('a')).toHaveAttribute('href', fileUploadUrl);
+        });
+
+        await axeNoViolations(container);
       });
 
       it('should allow uploading files with the file upload button', async () => {
-        const { findByTestId, findByText } = renderComponent({
-          doFileUploadRequest: mockUploadApi(),
-        });
-        const file = getFile();
-        const input = (await findByTestId('fileinput')).querySelector('input');
-
-        fireEvent.change(input, {
-          target: {
-            files: [file],
+        const { container } = await renderComponent({
+          messageInputProps: {
+            doFileUploadRequest: mockUploadApi(),
           },
         });
+        const file = getFile();
+        const input = screen.getByTestId(FILE_INPUT_TEST_ID);
 
-        const filenameText = await findByText(filename);
+        await act(() => {
+          fireEvent.change(input, {
+            target: {
+              files: [file],
+            },
+          });
+        });
 
-        expect(filenameText).toBeInTheDocument();
-        expect(filenameText.closest('a')).toHaveAttribute('href', fileUploadUrl);
+        expect(screen.getByText(filename)).toBeInTheDocument();
+        const filePreview = screen.getByTestId(FILE_PREVIEW_TEST_ID);
+        await waitFor(() => {
+          expect(filePreview.querySelector('a')).toHaveAttribute('href', fileUploadUrl);
+        });
+        await axeNoViolations(container);
       });
 
-      it('Should call error handler if an image failed to upload', async () => {
+      it('should call error handler if an image failed to upload', async () => {
         const cause = new Error('failed to upload');
         const doImageUploadRequest = mockFaultyUploadApi(cause);
         const errorHandler = jest.fn();
-        const { findByPlaceholderText } = renderComponent({
-          doImageUploadRequest,
-          errorHandler,
+        const { container } = await renderComponent({
+          messageInputProps: {
+            doImageUploadRequest,
+            errorHandler,
+          },
         });
         jest.spyOn(console, 'warn').mockImplementationOnce(() => null);
-        const formElement = await findByPlaceholderText(inputPlaceholder);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
         const file = getImage();
-        dropFile(file, formElement);
+
+        act(() => {
+          dropFile(file, formElement);
+        });
 
         await waitFor(() => {
-          expect(errorHandler).toHaveBeenCalledWith(cause, 'upload-image', expect.any(Object));
+          expect(errorHandler).toHaveBeenCalledWith(
+            cause,
+            'upload-attachment',
+            expect.any(Object),
+          );
           expect(doImageUploadRequest).toHaveBeenCalledWith(file, expect.any(Object));
         });
+        await axeNoViolations(container);
       });
 
-      it('Should call error handler if a file failed to upload and allow retrying', async () => {
+      it('should call error handler if a file failed to upload and allow retrying', async () => {
         const cause = new Error('failed to upload');
         const doFileUploadRequest = mockFaultyUploadApi(cause);
         const errorHandler = jest.fn();
 
-        const { findByPlaceholderText, findByText } = renderComponent({
-          doFileUploadRequest,
-          errorHandler,
+        const { container } = await renderComponent({
+          messageInputProps: {
+            doFileUploadRequest,
+            errorHandler,
+          },
         });
         jest.spyOn(console, 'warn').mockImplementationOnce(() => null);
-        const formElement = await findByPlaceholderText(inputPlaceholder);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
         const file = getFile();
-        dropFile(file, formElement);
+
+        act(() => dropFile(file, formElement));
 
         await waitFor(() => {
-          expect(errorHandler).toHaveBeenCalledWith(cause, 'upload-file', expect.any(Object));
+          expect(errorHandler).toHaveBeenCalledWith(
+            cause,
+            'upload-attachment',
+            expect.any(Object),
+          );
           expect(doFileUploadRequest).toHaveBeenCalledWith(file, expect.any(Object));
         });
 
         doFileUploadRequest.mockImplementationOnce(() => Promise.resolve({ file }));
 
-        fireEvent.click(await findByText('retry'));
+        await act(() => {
+          fireEvent.click(screen.getByTestId(FILE_UPLOAD_RETRY_BTN_TEST_ID));
+        });
 
-        await waitFor(() =>
-          expect(doFileUploadRequest).toHaveBeenCalledWith(file, expect.any(Object)),
-        );
+        await waitFor(() => {
+          expect(doFileUploadRequest).toHaveBeenCalledTimes(2);
+          expect(doFileUploadRequest).toHaveBeenCalledWith(file, expect.any(Object));
+        });
+        await axeNoViolations(container);
       });
 
       it('should not set multiple attribute on the file input if multipleUploads is false', async () => {
-        const { findByTestId } = renderComponent(
-          {},
-          {
+        const { container } = await renderComponent({
+          channelProps: {
             multipleUploads: false,
           },
-        );
-        const input = (await findByTestId('fileinput')).querySelector('input');
+        });
+        const input = screen.getByTestId(FILE_INPUT_TEST_ID);
         expect(input).not.toHaveAttribute('multiple');
+        await axeNoViolations(container);
       });
 
       it('should set multiple attribute on the file input if multipleUploads is true', async () => {
-        const { findByTestId } = renderComponent(
-          {},
-          {
+        const { container } = await renderComponent({
+          channelProps: {
             multipleUploads: true,
           },
-        );
-        const input = (await findByTestId('fileinput')).querySelector('input');
+        });
+        const input = screen.getByTestId(FILE_INPUT_TEST_ID);
         expect(input).toHaveAttribute('multiple');
+        await axeNoViolations(container);
       });
 
       const filename1 = '1.txt';
       const filename2 = '2.txt';
       it('should only allow dropping maxNumberOfFiles files into the dropzone', async () => {
-        const { findByPlaceholderText, queryByText } = renderComponent(
-          {
-            doFileUploadRequest: mockUploadApi(),
-          },
-          {
+        const { container } = await renderComponent({
+          channelProps: {
             maxNumberOfFiles: 1,
           },
-        );
+          messageInputProps: {
+            doFileUploadRequest: mockUploadApi(),
+          },
+        });
 
-        const formElement = await findByPlaceholderText(inputPlaceholder);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
 
         const file = getFile(filename1);
-        dropFile(file, formElement);
-        await waitFor(() => expect(queryByText(filename1)).toBeInTheDocument());
+
+        act(() => dropFile(file, formElement));
+
+        await waitFor(() => expect(screen.queryByText(filename1)).toBeInTheDocument());
 
         const file2 = getFile(filename2);
         act(() => dropFile(file2, formElement));
-        await waitFor(() => expect(queryByText(filename2)).not.toBeInTheDocument());
+
+        await waitFor(() =>
+          expect(screen.queryByText(filename2)).not.toBeInTheDocument(),
+        );
+
+        await axeNoViolations(container);
       });
 
       it('should only allow uploading 1 file if multipleUploads is false', async () => {
-        const { findByPlaceholderText, queryByText } = renderComponent(
-          {
-            doFileUploadRequest: mockUploadApi(),
-          },
-          {
+        const { container } = await renderComponent({
+          channelProps: {
             multipleUploads: false,
           },
-        );
+          messageInputProps: {
+            doFileUploadRequest: mockUploadApi(),
+          },
+        });
 
-        const formElement = await findByPlaceholderText(inputPlaceholder);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
 
         const file = getFile(filename1);
-        dropFile(file, formElement);
-        await waitFor(() => expect(queryByText(filename1)).toBeInTheDocument());
+        act(() => dropFile(file, formElement));
+
+        await waitFor(() => expect(screen.queryByText(filename1)).toBeInTheDocument());
 
         const file2 = getFile(filename2);
         act(() => dropFile(file2, formElement));
-        await waitFor(() => expect(queryByText(filename2)).not.toBeInTheDocument());
+        await waitFor(() =>
+          expect(screen.queryByText(filename2)).not.toBeInTheDocument(),
+        );
+        await axeNoViolations(container);
+      });
+
+      it('should show notification if size limit is exceeded', async () => {
+        defaultChatContext.getAppSettings.mockResolvedValueOnce({
+          app: {
+            file_upload_config: { size_limit: 1 },
+            image_upload_config: { size_limit: 1 },
+          },
+        });
+        await renderComponent({
+          messageInputProps: {
+            doFileUploadRequest: mockUploadApi(),
+          },
+        });
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
+        const file = getFile(filename1);
+        await act(() => dropFile(file, formElement));
+        await waitFor(() =>
+          expect(screen.queryByText(filename1)).not.toBeInTheDocument(),
+        );
+
+        expect(mockAddNotification).toHaveBeenCalledTimes(1);
+        expect(mockAddNotification.mock.calls[0][0]).toContain('File is too large');
+      });
+
+      it('should apply separate limits to files and images', async () => {
+        defaultChatContext.getAppSettings.mockResolvedValueOnce({
+          app: {
+            file_upload_config: { size_limit: 100 },
+            image_upload_config: { size_limit: 1 },
+          },
+        });
+        const doImageUploadRequest = mockUploadApi();
+        await renderComponent({
+          messageInputProps: {
+            doImageUploadRequest,
+          },
+        });
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
+        const file = getImage();
+        await act(() => {
+          dropFile(file, formElement);
+        });
+        await waitFor(() => {
+          expect(mockAddNotification).toHaveBeenCalledTimes(1);
+          expect(mockAddNotification.mock.calls[0][0]).toContain('File is too large');
+        });
+      });
+
+      it('should show attachment previews if at least one non-scraped attachments available', async () => {
+        await renderComponent({
+          messageInputProps: {
+            message: { attachments: [{ type: 'xxx' }] },
+          },
+        });
+        const previewListContainer = screen.getByTestId(ATTACHMENT_PREVIEW_LIST_TEST_ID);
+        expect(previewListContainer).toBeInTheDocument();
+        expect(previewListContainer.children).toHaveLength(1);
+        expect(previewListContainer.children[0]).toHaveAttribute(
+          'data-testid',
+          UNKNOWN_ATTACHMENT_PREVIEW_TEST_ID,
+        );
+      });
+
+      it('should not show scraped content in attachment previews', async () => {
+        await renderComponent({
+          messageInputProps: {
+            message: { attachments: [generateScrapedDataAttachment(), { type: 'xxx' }] },
+          },
+        });
+        const previewListContainer = screen.getByTestId(ATTACHMENT_PREVIEW_LIST_TEST_ID);
+        expect(previewListContainer).toBeInTheDocument();
+        expect(previewListContainer.children).toHaveLength(1);
+        expect(previewListContainer.children[0]).toHaveAttribute(
+          'data-testid',
+          UNKNOWN_ATTACHMENT_PREVIEW_TEST_ID,
+        );
+      });
+
+      it('should not show attachment previews if no files uploaded and no attachments available', async () => {
+        await renderComponent({
+          messageInputProps: {
+            message: {},
+          },
+        });
+        expect(
+          screen.queryByTestId(ATTACHMENT_PREVIEW_LIST_TEST_ID),
+        ).not.toBeInTheDocument();
+      });
+
+      it('should not show attachment previews if no files uploaded and attachments available are only link previews', async () => {
+        await renderComponent({
+          messageInputProps: {
+            message: { attachments: [generateScrapedDataAttachment()] },
+          },
+        });
+        expect(
+          screen.queryByTestId(ATTACHMENT_PREVIEW_LIST_TEST_ID),
+        ).not.toBeInTheDocument();
+      });
+
+      it('should not show attachment preview list if only failed uploads are available', async () => {
+        const cause = new Error('failed to upload');
+        const doFileUploadRequest = mockFaultyUploadApi(cause);
+
+        await renderComponent({
+          messageInputProps: {
+            doFileUploadRequest,
+          },
+        });
+        jest.spyOn(console, 'warn').mockImplementationOnce(() => null);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
+        const file = getFile();
+
+        act(() => dropFile(file, formElement));
+
+        await waitFor(() => {
+          expect(
+            screen.queryByTestId(ATTACHMENT_PREVIEW_LIST_TEST_ID),
+          ).not.toBeInTheDocument();
+        });
+      });
+
+      it('should show attachment preview list if not only failed uploads are available', async () => {
+        const cause = new Error('failed to upload');
+        const doFileUploadRequest = jest
+          .fn()
+          .mockImplementationOnce(() => Promise.reject(cause))
+          .mockImplementationOnce(() =>
+            Promise.resolve({
+              file: fileUploadUrl,
+            }),
+          );
+        await renderComponent({
+          messageInputProps: {
+            doFileUploadRequest,
+          },
+        });
+        jest.spyOn(console, 'warn').mockImplementationOnce(() => null);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
+        const file = getFile();
+
+        await act(() => dropFile(file, formElement));
+
+        await waitFor(() => {
+          expect(screen.getByTestId(ATTACHMENT_PREVIEW_LIST_TEST_ID)).toBeInTheDocument();
+          expect(screen.getByTestId(FILE_UPLOAD_RETRY_BTN_TEST_ID)).toBeInTheDocument();
+        });
+
+        await act(() => dropFile(file, formElement));
+
+        await waitFor(() => {
+          const previewList = screen.getByTestId(ATTACHMENT_PREVIEW_LIST_TEST_ID);
+          expect(previewList).toBeInTheDocument();
+          expect(previewList.children).toHaveLength(2);
+        });
       });
 
       // TODO: Check if pasting plaintext is not prevented -> tricky because recreating exact event is hard
       // TODO: Remove image/file -> difficult because there is no easy selector and components are in react-file-utils
     });
 
-    describe('Uploads disabled in Channel config', () => {
-      let originalConfig;
-      beforeAll(() => {
-        originalConfig = channel.getConfig;
-        channel.getConfig = () => ({ uploads: false });
-      });
-      afterAll(() => {
-        channel.getConfig = originalConfig;
-      });
+    describe('Uploads disabled', () => {
+      const channelData = { channel: { own_capabilities: [] } };
 
-      it('should not render file upload button', () => {
-        const { queryByTestId } = renderComponent();
-        expect(queryByTestId('fileinput')).not.toBeInTheDocument();
-      });
-
-      it('Pasting images and files should do nothing', async () => {
+      it('pasting images and files should do nothing', async () => {
         const doImageUploadRequest = mockUploadApi();
         const doFileUploadRequest = mockUploadApi();
-        const { findByPlaceholderText, queryByText } = renderComponent({
-          doFileUploadRequest,
-          doImageUploadRequest,
+        const { container } = await renderComponent({
+          channelData,
+          messageInputProps: {
+            doFileUploadRequest,
+            doImageUploadRequest,
+          },
         });
 
         const file = getFile();
@@ -437,264 +802,464 @@ const ActiveChannelSetter = ({ activeChannel }) => {
             { getAsFile: () => image, kind: 'file' },
           ],
         };
-        const formElement = await findByPlaceholderText(inputPlaceholder);
-        formElement.dispatchEvent(clipboardEvent);
+        const formElement = screen.getByPlaceholderText(inputPlaceholder);
+
+        await act(() => {
+          formElement.dispatchEvent(clipboardEvent);
+        });
+
         await waitFor(() => {
-          expect(queryByText(filename)).not.toBeInTheDocument();
+          expect(screen.queryByText(filename)).not.toBeInTheDocument();
           expect(doFileUploadRequest).not.toHaveBeenCalled();
           expect(doImageUploadRequest).not.toHaveBeenCalled();
         });
+        const results = await axe(container);
+        expect(results).toHaveNoViolations();
       });
 
       it('Should not upload an image when it is dropped on the dropzone', async () => {
         const doImageUploadRequest = mockUploadApi();
-        const { findByPlaceholderText } = renderComponent({
-          doImageUploadRequest,
+        const { container } = await renderComponent({
+          channelData,
+          messageInputProps: {
+            doImageUploadRequest,
+          },
         });
+
         // drop on the form input. Technically could be dropped just outside of it as well, but the input should always work.
-        const formElement = await findByPlaceholderText(inputPlaceholder);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
         const file = getImage();
-        dropFile(file, formElement);
+
+        act(() => {
+          dropFile(file, formElement);
+        });
 
         await waitFor(() => {
           expect(doImageUploadRequest).not.toHaveBeenCalled();
         });
+        await waitFor(axeNoViolations(container));
       });
     });
 
     describe('Submitting', () => {
-      it('Should submit the input value when clicking the submit button', async () => {
-        const { findByPlaceholderText, submit } = renderComponent();
+      it('should submit the input value when clicking the submit button', async () => {
+        const { channel, container, submit } = await renderComponent();
 
         const messageText = 'Some text';
 
-        fireEvent.change(await findByPlaceholderText(inputPlaceholder), {
+        fireEvent.change(await screen.findByPlaceholderText(inputPlaceholder), {
           target: {
             value: messageText,
           },
         });
 
-        await submit();
+        await act(() => submit());
 
-        expect(submitMock).toHaveBeenCalledWith(
-          channel.cid,
-          expect.objectContaining({
-            text: messageText,
-          }),
-        );
+        if (componentName === 'EditMessageForm') {
+          expect(editMock).toHaveBeenCalledWith(
+            channel.cid,
+            expect.objectContaining({
+              text: messageText,
+            }),
+            {},
+          );
+        } else {
+          expect(submitMock).toHaveBeenCalledWith(
+            channel,
+            expect.objectContaining({
+              text: messageText,
+            }),
+            {},
+          );
+        }
+        await axeNoViolations(container);
       });
 
-      it('Should use overrideSubmitHandler prop if it is defined', async () => {
+      it('should allow to send custom message data', async () => {
+        const customMessageData = { customX: 'customX' };
+        const CustomInputForm = () => {
+          const { handleChange, handleSubmit, value } = useMessageInputContext();
+          return (
+            <form>
+              <input
+                onChange={handleChange}
+                placeholder={inputPlaceholder}
+                value={value}
+              />
+              <button
+                onClick={(event) => {
+                  handleSubmit(event, customMessageData);
+                }}
+                type='submit'
+              >
+                Send
+              </button>
+            </form>
+          );
+        };
+
+        const messageInputProps =
+          componentName === 'EditMessageForm'
+            ? {
+                messageInputProps: {
+                  message: {
+                    text: `abc`,
+                  },
+                },
+              }
+            : {};
+
+        const renderComponent = makeRenderFn(CustomInputForm);
+        const { channel, container, submit } = await renderComponent(messageInputProps);
+
+        fireEvent.change(await screen.findByPlaceholderText(inputPlaceholder), {
+          target: {
+            value: 'Some text',
+          },
+        });
+
+        await act(() => submit());
+
+        await waitFor(() => {
+          const isEdit = componentName === 'EditMessageForm';
+          const calledMock = isEdit ? editMock : submitMock;
+          expect(calledMock).toHaveBeenCalledWith(
+            isEdit ? channel.cid : channel,
+            expect.objectContaining(customMessageData),
+            {},
+          );
+        });
+        await axeNoViolations(container);
+      });
+
+      it('should use overrideSubmitHandler prop if it is defined', async () => {
         const overrideMock = jest.fn().mockImplementation(() => Promise.resolve());
-        const { findByPlaceholderText, submit } = renderComponent({
-          overrideSubmitHandler: overrideMock,
+        const customMessageData = undefined;
+        const { channel, container, submit } = await renderComponent({
+          messageInputProps: {
+            overrideSubmitHandler: overrideMock,
+          },
         });
         const messageText = 'Some text';
 
-        fireEvent.change(await findByPlaceholderText(inputPlaceholder), {
+        fireEvent.change(await screen.findByPlaceholderText(inputPlaceholder), {
           target: {
             value: messageText,
           },
         });
-        await submit();
 
-        expect(overrideMock).toHaveBeenCalledWith(
-          expect.objectContaining({
-            text: messageText,
-          }),
-          channel.cid,
-        );
+        await act(() => submit());
+        if (componentName === 'EditMessageForm') {
+          expect(editMock).toHaveBeenCalledWith(
+            channel.cid,
+            expect.objectContaining({
+              text: messageText,
+            }),
+            {},
+          );
+        } else {
+          expect(overrideMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+              text: messageText,
+            }),
+            channel.cid,
+            customMessageData,
+            {},
+          );
+        }
+        await axeNoViolations(container);
       });
 
-      it('Should not do anything if the message is empty and has no files', async () => {
-        const { submit } = renderComponent();
+      it('should not do anything if the message is empty and has no files', async () => {
+        const { container, submit } = await renderComponent({
+          messageInputProps: { message: {} },
+        });
 
-        await submit();
+        await act(() => submit());
 
-        expect(submitMock).not.toHaveBeenCalled();
+        expect(
+          componentName === 'EditMessageForm' ? editMock : submitMock,
+        ).not.toHaveBeenCalled();
+        await axeNoViolations(container);
       });
 
       it('should add image as attachment if a message is submitted with an image', async () => {
         const doImageUploadRequest = mockUploadApi();
-        const { findByPlaceholderText, submit } = renderComponent({
-          doImageUploadRequest,
+        const { channel, container, submit } = await renderComponent({
+          messageInputProps: {
+            doImageUploadRequest,
+          },
         });
 
-        const formElement = await findByPlaceholderText(inputPlaceholder);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
         const file = getImage();
-        dropFile(file, formElement);
+
+        act(() => dropFile(file, formElement));
 
         // wait for image uploading to complete before trying to send the message
-        // eslint-disable-next-line jest/prefer-called-with
+
         await waitFor(() => expect(doImageUploadRequest).toHaveBeenCalled());
-        await submit();
-        expect(submitMock).toHaveBeenCalledWith(
-          channel.cid,
-          expect.objectContaining({
-            attachments: expect.arrayContaining([
-              expect.objectContaining({
-                image_url: fileUploadUrl,
-                type: 'image',
-              }),
-            ]),
-          }),
-        );
+
+        await act(() => submit());
+
+        const msgFragment = {
+          attachments: expect.arrayContaining([
+            expect.objectContaining({
+              image_url: fileUploadUrl,
+              type: 'image',
+            }),
+          ]),
+        };
+
+        if (componentName === 'EditMessageForm') {
+          expect(editMock).toHaveBeenCalledWith(
+            channel.cid,
+            expect.objectContaining(msgFragment),
+            {},
+          );
+        } else {
+          expect(submitMock).toHaveBeenCalledWith(
+            channel,
+            expect.objectContaining(msgFragment),
+            {},
+          );
+        }
+        await axeNoViolations(container);
       });
 
-      it('should add file as attachment if a message is submitted with an file', async () => {
+      it('should add file as attachment if a message is submitted with a file', async () => {
         const doFileUploadRequest = mockUploadApi();
-        const { findByPlaceholderText, submit } = renderComponent({
-          doFileUploadRequest,
+        const { channel, container, submit } = await renderComponent({
+          messageInputProps: {
+            doFileUploadRequest,
+          },
         });
 
-        const formElement = await findByPlaceholderText(inputPlaceholder);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
         const file = getFile();
-        dropFile(file, formElement);
+
+        act(() => dropFile(file, formElement));
 
         // wait for file uploading to complete before trying to send the message
-        // eslint-disable-next-line jest/prefer-called-with
+
         await waitFor(() => expect(doFileUploadRequest).toHaveBeenCalled());
-        await submit();
-        expect(submitMock).toHaveBeenCalledWith(
-          channel.cid,
-          expect.objectContaining({
-            attachments: expect.arrayContaining([
-              expect.objectContaining({
-                asset_url: fileUploadUrl,
-                type: 'file',
-              }),
-            ]),
-          }),
-        );
+
+        await act(() => submit());
+
+        const msgFragment = {
+          attachments: expect.arrayContaining([
+            expect.objectContaining({
+              asset_url: fileUploadUrl,
+              type: 'file',
+            }),
+          ]),
+        };
+
+        if (componentName === 'EditMessageForm') {
+          expect(editMock).toHaveBeenCalledWith(
+            channel.cid,
+            expect.objectContaining(msgFragment),
+            {},
+          );
+        } else {
+          expect(submitMock).toHaveBeenCalledWith(
+            channel,
+            expect.objectContaining(msgFragment),
+            {},
+          );
+        }
+        await axeNoViolations(container);
       });
 
       it('should add audio as attachment if a message is submitted with an audio file', async () => {
         const doFileUploadRequest = mockUploadApi();
-        const { findByPlaceholderText, submit } = renderComponent({
-          doFileUploadRequest,
+        const { channel, container, submit } = await renderComponent({
+          messageInputProps: {
+            doFileUploadRequest,
+          },
         });
 
-        const formElement = await findByPlaceholderText(inputPlaceholder);
+        const formElement = await screen.findByPlaceholderText(inputPlaceholder);
         const file = new File(['Message in a bottle'], 'the-police.mp3', {
           type: 'audio/mp3',
         });
-        dropFile(file, formElement);
+
+        act(() => dropFile(file, formElement));
 
         // wait for file uploading to complete before trying to send the message
-        // eslint-disable-next-line jest/prefer-called-with
+
         await waitFor(() => expect(doFileUploadRequest).toHaveBeenCalled());
-        await submit();
-        expect(submitMock).toHaveBeenCalledWith(
-          channel.cid,
-          expect.objectContaining({
-            attachments: expect.arrayContaining([
-              expect.objectContaining({
-                asset_url: fileUploadUrl,
-                type: 'audio',
-              }),
-            ]),
-          }),
-        );
+
+        await act(() => submit());
+
+        const msgFragment = {
+          attachments: expect.arrayContaining([
+            expect.objectContaining({
+              asset_url: fileUploadUrl,
+              type: 'audio',
+            }),
+          ]),
+        };
+
+        if (componentName === 'EditMessageForm') {
+          expect(editMock).toHaveBeenCalledWith(
+            channel.cid,
+            expect.objectContaining(msgFragment),
+            {},
+          );
+        } else {
+          expect(submitMock).toHaveBeenCalledWith(
+            channel,
+            expect.objectContaining(msgFragment),
+            {},
+          );
+        }
+        await axeNoViolations(container);
       });
-      it('should not submit if keycodeSubmitKeys are provided and keydown events do not match', async () => {
-        const { findByPlaceholderText } = renderComponent({
-          keycodeSubmitKeys: [[17]],
-        });
-        const input = await findByPlaceholderText(inputPlaceholder);
 
-        fireEvent.keyDown(input, {
-          keyCode: 19,
-        });
-
-        expect(submitMock).not.toHaveBeenCalled();
-      });
-      it('should submit if keycodeSubmitKeys are provided and keydown events do match', async () => {
-        const { findByPlaceholderText, submit } = renderComponent({
-          keycodeSubmitKeys: [[17, 13]],
-        });
-        const messageText = 'Submission text.';
-        const input = await findByPlaceholderText(inputPlaceholder);
-
-        fireEvent.change(input, {
-          target: {
-            value: messageText,
+      it('should submit if shouldSubmit function is not provided but keydown events do match', async () => {
+        const submitHandler = jest.fn();
+        const { channel, container } = await renderComponent({
+          messageInputProps: {
+            overrideSubmitHandler: submitHandler,
           },
         });
+        const input = await screen.findByPlaceholderText(inputPlaceholder);
 
-        fireEvent.keyDown(input, {
-          keyCode: 17,
-        });
-
-        fireEvent.keyDown(input, {
-          keyCode: 13,
-        });
-
-        await submit();
-
-        expect(submitMock).toHaveBeenCalledWith(
-          channel.cid,
-          expect.objectContaining({
-            text: messageText,
+        const messageText = 'Submission text.';
+        await act(() =>
+          fireEvent.change(input, {
+            target: {
+              value: messageText,
+            },
           }),
         );
-      });
-      it('should submit if [[16,13], [57], [48]] are provided as keycodeSubmitKeys and keydown events match 57', async () => {
-        const { findByPlaceholderText, submit } = renderComponent({
-          keycodeSubmitKeys: [[16, 13], [57], [48]],
-        });
-        const messageText = 'Submission text.';
-        const input = await findByPlaceholderText(inputPlaceholder);
 
-        fireEvent.change(input, {
-          target: {
-            value: messageText,
+        await act(() => fireEvent.keyDown(input, { key: 'Enter' }));
+
+        const msgFragment = {
+          text: messageText,
+        };
+
+        if (componentName === 'EditMessageForm') {
+          expect(editMock).toHaveBeenCalledWith(
+            channel.cid,
+            expect.objectContaining(msgFragment),
+            {},
+          );
+        } else {
+          expect(submitHandler).toHaveBeenCalledWith(
+            expect.objectContaining(msgFragment),
+            channel.cid,
+            undefined,
+            {},
+          );
+        }
+        await axeNoViolations(container);
+      });
+
+      it('should not submit if shouldSubmit function is provided but keydown events do not match', async () => {
+        const submitHandler = jest.fn();
+        const { container } = await renderComponent({
+          messageInputProps: {
+            overrideSubmitHandler: submitHandler,
+            shouldSubmit: (e) => e.key === '9',
           },
         });
+        const input = await screen.findByPlaceholderText(inputPlaceholder);
 
-        fireEvent.keyDown(input, {
-          keyCode: 57,
-        });
-
-        await submit();
-
-        expect(submitMock).toHaveBeenCalledWith(
-          channel.cid,
-          expect.objectContaining({
-            text: messageText,
+        const messageText = 'Submission text.';
+        await act(() =>
+          fireEvent.change(input, {
+            target: {
+              value: messageText,
+            },
           }),
         );
-      });
-      it('should submit if just a tuple is provided and keycode events do match', async () => {
-        const { findByPlaceholderText, submit } = renderComponent({
-          keycodeSubmitKeys: [[76, 77]],
-        });
-        const messageText = 'Submission text.';
-        const input = await findByPlaceholderText(inputPlaceholder);
 
-        fireEvent.change(input, {
-          target: {
-            value: messageText,
+        await act(() => fireEvent.keyDown(input, { key: 'Enter' }));
+
+        expect(submitHandler).not.toHaveBeenCalled();
+        await axeNoViolations(container);
+      });
+
+      it('should submit if shouldSubmit function is provided and keydown events do match', async () => {
+        const submitHandler = jest.fn();
+
+        const { channel, container } = await renderComponent({
+          messageInputProps: {
+            overrideSubmitHandler: submitHandler,
+            shouldSubmit: (e) => e.key === '9',
           },
         });
+        const messageText = 'Submission text.';
+        const input = await screen.findByPlaceholderText(inputPlaceholder);
 
-        fireEvent.keyDown(input, {
-          keyCode: 76,
+        await act(() => {
+          fireEvent.change(input, {
+            target: {
+              value: messageText,
+            },
+          });
+
+          fireEvent.keyDown(input, {
+            key: '9',
+          });
         });
 
-        fireEvent.keyDown(input, {
-          keyCode: 77,
+        const msgFragment = {
+          text: messageText,
+        };
+
+        if (componentName === 'EditMessageForm') {
+          expect(editMock).toHaveBeenCalledWith(
+            channel.cid,
+            expect.objectContaining(msgFragment),
+            {},
+          );
+        } else {
+          expect(submitHandler).toHaveBeenCalledWith(
+            expect.objectContaining(msgFragment),
+            channel.cid,
+            undefined,
+            {},
+          );
+        }
+
+        await axeNoViolations(container);
+      });
+
+      it('should not submit if Shift key is pressed', async () => {
+        const submitHandler = jest.fn();
+
+        const { container } = await renderComponent({
+          messageInputProps: {
+            overrideSubmitHandler: submitHandler,
+          },
+        });
+        const messageText = 'Submission text.';
+        const input = await screen.findByPlaceholderText(inputPlaceholder);
+
+        await act(() => {
+          fireEvent.change(input, {
+            target: {
+              value: messageText,
+            },
+          });
+
+          fireEvent.keyDown(input, {
+            key: 'Enter',
+            shiftKey: true,
+          });
         });
 
-        await submit();
+        expect(submitHandler).not.toHaveBeenCalled();
 
-        expect(submitMock).toHaveBeenCalledWith(
-          channel.cid,
-          expect.objectContaining({ text: messageText }),
-        );
+        await axeNoViolations(container);
       });
     });
 
-    it('Should edit a message if it is passed through the message prop', async () => {
+    it('should edit a message if it is passed through the message prop', async () => {
       const file = {
         asset_url: 'somewhere.txt',
         file_size: 1000,
@@ -714,11 +1279,14 @@ const ActiveChannelSetter = ({ activeChannel }) => {
         mentioned_users,
         text: `@${username} what's up!`,
       });
-      const { submit } = renderComponent({
-        clearEditingState: () => {},
-        message,
+      const { channel, container, submit } = await renderComponent({
+        messageInputProps: {
+          clearEditingState: () => {},
+          message,
+        },
       });
-      await submit();
+
+      await act(() => submit());
 
       expect(editMock).toHaveBeenCalledWith(
         channel.cid,
@@ -730,59 +1298,121 @@ const ActiveChannelSetter = ({ activeChannel }) => {
           mentioned_users: [{ id: userId, name: username }],
           text: message.text,
         }),
+        {},
       );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
 
-    it('Should add a mentioned user if @ is typed and a user is selected', async () => {
-      const { findByPlaceholderText, getByTestId, submit } = renderComponent();
+    it('should list all the available users to mention if only @ is typed', async () => {
+      const { channel } = await renderComponent({ customUser: generateUser() });
 
-      const formElement = await findByPlaceholderText(inputPlaceholder);
-      fireEvent.change(formElement, {
-        target: {
-          selectionEnd: 1,
-          value: '@',
-        },
+      const formElement = await screen.findByPlaceholderText(inputPlaceholder);
+
+      await act(() => {
+        fireEvent.change(formElement, {
+          target: {
+            selectionEnd: 1,
+            value: '@',
+          },
+        });
       });
-      const usernameListItem = await getByTestId('user-item-name');
+
+      const usernameList = screen.getAllByTestId('user-item-name');
+      expect(usernameList).toHaveLength(Object.keys(channel.state.members).length);
+    });
+
+    it('should add a mentioned user if @ is typed and a user is selected', async () => {
+      const { channel, container, submit } = await renderComponent();
+
+      const formElement = await screen.findByPlaceholderText(inputPlaceholder);
+
+      await act(() => {
+        fireEvent.change(formElement, {
+          target: {
+            selectionEnd: 1,
+            value: '@',
+          },
+        });
+      });
+
+      const usernameListItem = await screen.getByTestId('user-item-name');
       expect(usernameListItem).toBeInTheDocument();
 
-      fireEvent.click(usernameListItem);
-      await submit();
-
-      expect(submitMock).toHaveBeenCalledWith(
-        channel.cid,
-        expect.objectContaining({
-          mentioned_users: expect.arrayContaining([mentionId]),
-        }),
-      );
-    });
-
-    it('should remove mentioned users if they are no longer mentioned in the message text', async () => {
-      const { findByPlaceholderText, submit } = renderComponent({
-        message: {
-          mentioned_users: [{ id: userId, name: username }],
-          text: `@${username}`,
-        },
-      });
-      // remove all text from input
-      const formElement = await findByPlaceholderText(inputPlaceholder);
-      fireEvent.change(formElement, {
-        target: {
-          selectionEnd: 1,
-          value: 'no mentioned users',
-        },
+      await act(() => {
+        fireEvent.click(usernameListItem);
       });
 
-      await submit();
+      await act(() => submit());
 
-      await waitFor(() =>
+      if (componentName === 'EditMessageForm') {
         expect(editMock).toHaveBeenCalledWith(
           channel.cid,
           expect.objectContaining({
-            mentioned_users: [],
+            ...mainListMessage,
+            created_at: expect.any(Date),
+            mentioned_users: [
+              {
+                banned: false,
+                created_at: '2020-04-27T13:39:49.331742Z',
+                id: 'mention-id',
+                image: expect.any(String),
+                name: 'mention-name',
+                online: false,
+                role: 'user',
+                updated_at: '2020-04-27T13:39:49.332087Z',
+              },
+            ],
+            text: '@mention-name ',
+            updated_at: expect.any(Date),
           }),
-        ),
+          {},
+        );
+      } else {
+        expect(submitMock).toHaveBeenCalledWith(
+          channel,
+          expect.objectContaining({
+            mentioned_users: expect.arrayContaining([mentionId]),
+          }),
+          {},
+        );
+      }
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('should remove mentioned users if they are no longer mentioned in the message text', async () => {
+      const { channel, container, submit } = await renderComponent({
+        messageInputProps: {
+          message: {
+            mentioned_users: [{ id: userId, name: username }],
+            text: `@${username}`,
+          },
+        },
+      });
+      // remove all text from input
+      const formElement = await screen.findByPlaceholderText(inputPlaceholder);
+
+      await act(() => {
+        fireEvent.change(formElement, {
+          target: {
+            selectionEnd: 1,
+            value: 'no mentioned users',
+          },
+        });
+      });
+
+      await act(() => submit());
+
+      expect(editMock).toHaveBeenCalledWith(
+        channel.cid,
+        expect.objectContaining({
+          mentioned_users: [],
+        }),
+        {},
       );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
 
     it('should override the default List component when SuggestionList is provided as a prop', async () => {
@@ -790,24 +1420,327 @@ const ActiveChannelSetter = ({ activeChannel }) => {
         <div data-testid='suggestion-list'>Suggestion List</div>
       );
 
-      const { findByPlaceholderText, getByTestId, queryByText } = renderComponent(
-        {},
-        { AutocompleteSuggestionList },
+      const { container } = await renderComponent({
+        channelProps: { AutocompleteSuggestionList },
+      });
+
+      const formElement = await screen.findByPlaceholderText(inputPlaceholder);
+
+      await waitFor(() =>
+        expect(screen.queryByText('Suggestion List')).not.toBeInTheDocument(),
       );
 
-      const formElement = await findByPlaceholderText(inputPlaceholder);
-
-      await waitFor(() => expect(queryByText('Suggestion List')).not.toBeInTheDocument());
-
-      fireEvent.change(formElement, {
-        target: { value: '/' },
+      act(() => {
+        fireEvent.change(formElement, {
+          target: { value: '/' },
+        });
       });
 
       if (componentName !== 'EditMessageForm') {
-        await waitFor(
-          () => expect(getByTestId('suggestion-list')).toBeInTheDocument(), // eslint-disable-line
+        await waitFor(() =>
+          expect(screen.getByTestId('suggestion-list')).toBeInTheDocument(),
         );
+        const results = await axe(container);
+        expect(results).toHaveNoViolations();
       }
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+  });
+});
+
+describe('EditMessageForm only', () => {
+  afterEach(tearDown);
+
+  const renderComponent = makeRenderFn(EditMessageForm);
+
+  it('should render file upload button disabled', async () => {
+    const channelData = { channel: { own_capabilities: [] } };
+    const { container } = await renderComponent({
+      channelData,
+    });
+    await waitFor(() => expect(screen.getByTestId(FILE_INPUT_TEST_ID)).toBeDisabled());
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
+  });
+});
+
+describe(`MessageInputFlat only`, () => {
+  afterEach(tearDown);
+
+  const renderComponent = makeRenderFn(MessageInputFlat);
+
+  it('should contain default message text if provided', async () => {
+    const defaultValue = nanoid();
+    await renderComponent({
+      messageInputProps: {
+        additionalTextareaProps: { defaultValue },
+      },
+    });
+    await waitFor(() => {
+      const textarea = screen.queryByDisplayValue(defaultValue);
+      expect(textarea).toBeInTheDocument();
+    });
+  });
+
+  it('should prefer value from getDefaultValue before additionalTextareaProps.defaultValue', async () => {
+    const defaultValue = nanoid();
+    const generatedDefaultValue = nanoid();
+    const getDefaultValue = () => generatedDefaultValue;
+    await renderComponent({
+      messageInputProps: {
+        additionalTextareaProps: { defaultValue },
+        getDefaultValue,
+      },
+    });
+    await waitFor(() => {
+      const textarea = screen.queryByDisplayValue(generatedDefaultValue);
+      expect(textarea).toBeInTheDocument();
+    });
+  });
+
+  const renderWithActiveCooldown = async ({ messageInputProps = {} } = {}) => {
+    const {
+      channels: [channel],
+      client,
+    } = await initClientWithChannels({
+      channelsData: [{ channel: { cooldown } }],
+      customUser: user,
+    });
+
+    const lastSentSecondsAhead = 5;
+    await renderComponent({
+      chatContextOverrides: {
+        latestMessageDatesByChannels: {
+          [channel.cid]: new Date(new Date().getTime() + lastSentSecondsAhead * 1000),
+        },
+      },
+      customChannel: channel,
+      customClient: client,
+      messageInputProps,
+    });
+  };
+
+  const initQuotedMessagePreview = async () => {
+    await waitFor(() =>
+      expect(screen.queryByTestId('quoted-message-preview')).not.toBeInTheDocument(),
+    );
+
+    const quoteButton = await screen.findByText(/^reply$/i);
+    await waitFor(() => expect(quoteButton).toBeInTheDocument());
+
+    act(() => {
+      fireEvent.click(quoteButton);
+    });
+  };
+
+  const quotedMessagePreviewIsDisplayedCorrectly = async (message) => {
+    await waitFor(() =>
+      expect(screen.queryByTestId('quoted-message-preview')).toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.getByText(message.text)).toBeInTheDocument());
+  };
+
+  const quotedMessagePreviewIsNotDisplayed = (message) => {
+    expect(screen.queryByText(/reply to message/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(message.text)).not.toBeInTheDocument();
+  };
+
+  describe('QuotedMessagePreview', () => {
+    it('is displayed on quote action click', async () => {
+      await renderComponent();
+      await initQuotedMessagePreview(mainListMessage);
+      await quotedMessagePreviewIsDisplayedCorrectly(mainListMessage);
+    });
+
+    it('renders proper markdown (through default renderText fn)', async () => {
+      const m = generateMessage({
+        mentioned_users: [{ id: 'john', name: 'John Cena' }],
+        text: 'hey @John Cena',
+        user,
+      });
+      await renderComponent({ messageContextOverrides: { message: m } });
+      await initQuotedMessagePreview(m);
+
+      expect(await screen.findByText('@John Cena')).toHaveAttribute('data-user-id');
+    });
+
+    it('uses custom renderText fn if provided', async () => {
+      const m = generateMessage({
+        text: nanoid(),
+        user,
+      });
+      const fn = jest.fn().mockReturnValue(<div data-testid={m.text}>{m.text}</div>);
+      await renderComponent({
+        channelProps: {
+          QuotedMessagePreview: (props) => (
+            <QuotedMessagePreview {...props} renderText={fn} />
+          ),
+        },
+        messageContextOverrides: { message: m },
+      });
+      await initQuotedMessagePreview(m);
+
+      expect(fn).toHaveBeenCalled();
+      expect(await screen.findByTestId(m.text)).toBeInTheDocument();
+    });
+
+    it('is updated on original message update', async () => {
+      const { channel, client } = await renderComponent();
+      await initQuotedMessagePreview(mainListMessage);
+      mainListMessage.text = new Date().toISOString();
+      await act(() => {
+        dispatchMessageUpdatedEvent(client, mainListMessage, channel);
+      });
+      await quotedMessagePreviewIsDisplayedCorrectly(mainListMessage);
+    });
+
+    it('is closed on original message delete', async () => {
+      const { channel, client } = await renderComponent();
+      await initQuotedMessagePreview(mainListMessage);
+      await act(() => {
+        dispatchMessageDeletedEvent(client, mainListMessage, channel);
+      });
+      quotedMessagePreviewIsNotDisplayed(mainListMessage);
+    });
+
+    it('renders quoted Poll component if message contains poll', async () => {
+      const poll = generatePoll();
+      const messageWithPoll = generateMessage({ poll, poll_id: poll.id, text: 'X' });
+      const {
+        channels: [channel],
+        client,
+      } = await initClientWithChannels({
+        channelsData: [{ messages: [messageWithPoll] }],
+      });
+      const { container } = await renderComponent({
+        customChannel: channel,
+        customClient: client,
+        messageContextOverrides: {
+          ...defaultMessageContextValue,
+          message: messageWithPoll,
+        },
+      });
+
+      await initQuotedMessagePreview(messageWithPoll);
+      expect(
+        container.querySelector('.str-chat__quoted-poll-preview'),
+      ).toBeInTheDocument();
+    });
+
+    it('renders custom quoted Poll component if message contains poll', async () => {
+      const poll = generatePoll();
+      const messageWithPoll = generateMessage({ poll, poll_id: poll.id, text: 'X' });
+      const {
+        channels: [channel],
+        client,
+      } = await initClientWithChannels({
+        channelsData: [{ messages: [messageWithPoll] }],
+      });
+      const pollText = 'Custom Poll component';
+      const QuotedPoll = () => <div>{pollText}</div>;
+
+      await renderComponent({
+        channelProps: { QuotedPoll },
+        customChannel: channel,
+        customClient: client,
+        messageContextOverrides: {
+          ...defaultMessageContextValue,
+          message: messageWithPoll,
+        },
+      });
+
+      await initQuotedMessagePreview(messageWithPoll);
+      expect(screen.queryByText(pollText)).toBeInTheDocument();
+    });
+  });
+
+  describe('send button', () => {
+    it('should be renderer for empty input', async () => {
+      await renderComponent();
+      expect(screen.getByTestId(SEND_BTN_TEST_ID)).toBeInTheDocument();
+    });
+
+    it('should be rendered when editing a message', async () => {
+      await renderComponent({ messageInputProps: { message: generateMessage() } });
+      expect(screen.getByTestId(SEND_BTN_TEST_ID)).toBeInTheDocument();
+    });
+
+    it('should not be renderer during active cooldown period', async () => {
+      await renderWithActiveCooldown();
+      expect(screen.queryByTestId(SEND_BTN_TEST_ID)).not.toBeInTheDocument();
+    });
+
+    it('should not be renderer if explicitly hidden', async () => {
+      await renderComponent({ messageInputProps: { hideSendButton: true } });
+      expect(screen.queryByTestId(SEND_BTN_TEST_ID)).not.toBeInTheDocument();
+    });
+
+    it('should be disabled if there is no content to be submitted', async () => {
+      await renderComponent();
+      expect(screen.getByTestId(SEND_BTN_TEST_ID)).toBeDisabled();
+    });
+    it('should be enabled if there is text to be submitted', async () => {
+      await renderComponent();
+      fireEvent.change(screen.getByPlaceholderText(inputPlaceholder), {
+        target: {
+          value: 'X',
+        },
+      });
+      expect(screen.getByTestId(SEND_BTN_TEST_ID)).toBeEnabled();
+    });
+    it('should be enabled if there are uploads to be submitted', async () => {
+      await renderComponent({
+        messageInputProps: {
+          doFileUploadRequest: mockUploadApi(),
+        },
+      });
+      const file = getFile();
+
+      await act(() => {
+        fireEvent.change(screen.getByTestId(FILE_INPUT_TEST_ID), {
+          target: {
+            files: [file],
+          },
+        });
+      });
+      expect(screen.getByTestId(SEND_BTN_TEST_ID)).toBeEnabled();
+    });
+    it('should be enabled if there are attachments to be submitted', async () => {
+      await renderComponent({
+        messageInputProps: {
+          message: { attachments: [{}] },
+        },
+      });
+      expect(screen.getByTestId(SEND_BTN_TEST_ID)).toBeEnabled();
+    });
+    it.todo('should not be enabled if there are failed attachments only');
+  });
+
+  describe('cooldown timer', () => {
+    const COOLDOWN_TIMER_TEST_ID = 'cooldown-timer';
+
+    it('should be renderer during active cool-down period', async () => {
+      await renderWithActiveCooldown();
+      expect(screen.getByTestId(COOLDOWN_TIMER_TEST_ID)).toBeInTheDocument();
+    });
+
+    it('should not be renderer if send button explicitly hidden', async () => {
+      await renderWithActiveCooldown({ messageInputProps: { hideSendButton: true } });
+      expect(screen.queryByTestId(COOLDOWN_TIMER_TEST_ID)).not.toBeInTheDocument();
+    });
+
+    it('should be removed after cool-down period elapsed', async () => {
+      jest.useFakeTimers();
+      await renderWithActiveCooldown();
+      expect(screen.getByTestId(COOLDOWN_TIMER_TEST_ID)).toHaveTextContent(
+        cooldown.toString(),
+      );
+      act(() => {
+        jest.advanceTimersByTime(cooldown * 1000);
+      });
+      expect(screen.queryByTestId(COOLDOWN_TIMER_TEST_ID)).not.toBeInTheDocument();
+      jest.useRealTimers();
     });
   });
 });

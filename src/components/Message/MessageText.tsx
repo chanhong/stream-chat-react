@@ -1,125 +1,99 @@
+import clsx from 'clsx';
 import React, { useMemo } from 'react';
 
-import { useMobilePress } from './hooks';
 import { QuotedMessage as DefaultQuotedMessage } from './QuotedMessage';
-import { messageHasAttachments } from './utils';
+import { isOnlyEmojis, messageHasAttachments } from './utils';
 
-import { useComponentContext } from '../../context/ComponentContext';
-import { useMessageContext } from '../../context/MessageContext';
-import { useTranslationContext } from '../../context/TranslationContext';
-import { renderText as defaultRenderText, isOnlyEmojis } from '../../utils';
+import {
+  useComponentContext,
+  useMessageContext,
+  useTranslationContext,
+} from '../../context';
+import { renderText as defaultRenderText } from './renderText';
+import { MessageErrorText } from './MessageErrorText';
 
 import type { TranslationLanguages } from 'stream-chat';
-
-import type { StreamMessage } from '../../context/ChannelStateContext';
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+import type { MessageContextValue, StreamMessage } from '../../context';
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
 export type MessageTextProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 > = {
+  /* Replaces the CSS class name placed on the component's inner `div` container */
   customInnerClass?: string;
+  /* Adds a CSS class name to the component's outer `div` container */
   customWrapperClass?: string;
-  message?: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>;
+  /* The `StreamChat` message object, which provides necessary data to the underlying UI components (overrides the value stored in `MessageContext`) */
+  message?: StreamMessage<StreamChatGenerics>;
+  /* Theme string to be added to CSS class names */
   theme?: string;
-};
+} & Pick<MessageContextValue<StreamChatGenerics>, 'renderText'>;
 
 const UnMemoizedMessageTextComponent = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: MessageTextProps<At, Ch, Co, Ev, Me, Re, Us>,
+  props: MessageTextProps<StreamChatGenerics>,
 ) => {
   const {
     customInnerClass,
     customWrapperClass = '',
     message: propMessage,
+    renderText: propsRenderText,
     theme = 'simple',
   } = props;
 
-  const { QuotedMessage = DefaultQuotedMessage } = useComponentContext<At, Ch, Co, Ev, Me, Re, Us>(
-    'MessageText',
-  );
+  const { QuotedMessage = DefaultQuotedMessage } =
+    useComponentContext<StreamChatGenerics>('MessageText');
 
   const {
     message: contextMessage,
     onMentionsClickMessage,
     onMentionsHoverMessage,
-    renderText = defaultRenderText,
+    renderText: contextRenderText,
     unsafeHTML,
-  } = useMessageContext<At, Ch, Co, Ev, Me, Re, Us>('MessageText');
+  } = useMessageContext<StreamChatGenerics>('MessageText');
 
-  const { t, userLanguage } = useTranslationContext('MessageText');
+  const renderText = propsRenderText ?? contextRenderText ?? defaultRenderText;
 
-  const { handleMobilePress } = useMobilePress();
-
+  const { userLanguage } = useTranslationContext('MessageText');
   const message = propMessage || contextMessage;
-
   const hasAttachment = messageHasAttachments(message);
 
   const messageTextToRender =
-    message.i18n?.[`${userLanguage}_text` as `${TranslationLanguages}_text`] || message.text;
+    message.i18n?.[`${userLanguage}_text` as `${TranslationLanguages}_text`] ||
+    message.text;
 
-  const messageText = useMemo(() => renderText(messageTextToRender, message.mentioned_users), [
-    message.mentioned_users,
-    messageTextToRender,
-  ]);
+  const messageText = useMemo(
+    () => renderText(messageTextToRender, message.mentioned_users),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [message.mentioned_users, messageTextToRender],
+  );
 
   const wrapperClass = customWrapperClass || 'str-chat__message-text';
   const innerClass =
-    customInnerClass || `str-chat__message-text-inner str-chat__message-${theme}-text-inner`;
+    customInnerClass ||
+    `str-chat__message-text-inner str-chat__message-${theme}-text-inner`;
 
   if (!messageTextToRender && !message.quoted_message) return null;
 
   return (
-    <div className={wrapperClass}>
+    <div className={wrapperClass} tabIndex={0}>
       <div
-        className={`
-          ${innerClass}
-          ${hasAttachment ? ` str-chat__message-${theme}-text-inner--has-attachment` : ''}
-          ${
-            isOnlyEmojis(message.text) && !message.quoted_message
-              ? ` str-chat__message-${theme}-text-inner--is-emoji`
-              : ''
-          }
-        `.trim()}
+        className={clsx(innerClass, {
+          [`str-chat__message-${theme}-text-inner--has-attachment`]: hasAttachment,
+          [` str-chat__message-${theme}-text-inner--is-emoji`]:
+            isOnlyEmojis(message.text) && !message.quoted_message,
+        })}
         data-testid='message-text-inner-wrapper'
         onClick={onMentionsClickMessage}
         onMouseOver={onMentionsHoverMessage}
       >
         {message.quoted_message && <QuotedMessage />}
-        {message.type === 'error' && (
-          <div className={`str-chat__${theme}-message--error-message`}>{t('Error · Unsent')}</div>
-        )}
-        {message.status === 'failed' && (
-          <div className={`str-chat__${theme}-message--error-message`}>
-            {message.errorStatusCode !== 403
-              ? t('Message Failed · Click to try again')
-              : t('Message Failed · Unauthorized')}
-          </div>
-        )}
+        <MessageErrorText message={message} theme={theme} />
         {unsafeHTML && message.html ? (
           <div dangerouslySetInnerHTML={{ __html: message.html }} />
         ) : (
-          <div onClick={handleMobilePress}>{messageText}</div>
+          <div>{messageText}</div>
         )}
       </div>
     </div>

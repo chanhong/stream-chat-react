@@ -1,131 +1,32 @@
-import React, { useMemo } from 'react';
-
-import { MessageContextValue, useMessageContext } from '../../context/MessageContext';
-import {
-  isDate,
-  isDayOrMoment,
-  isNumberOrString,
-  TDateTimeParser,
-  TDateTimeParserInput,
-  useTranslationContext,
-} from '../../context/TranslationContext';
+import React from 'react';
+import { useMessageContext } from '../../context/MessageContext';
+import { Timestamp as DefaultTimestamp } from './Timestamp';
+import { useComponentContext } from '../../context';
 
 import type { StreamMessage } from '../../context/ChannelStateContext';
-
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
-
-export const defaultTimestampFormat = 'h:mmA';
-
-export const notValidDateWarning =
-  'MessageTimestamp was called without a message, or message has invalid created_at date.';
-
-export const noParsingFunctionWarning =
-  'MessageTimestamp was called but there is no datetime parsing function available';
-
-function getDateString(
-  messageCreatedAt?: string,
-  formatDate?: MessageContextValue['formatDate'],
-  calendar?: boolean,
-  tDateTimeParser?: TDateTimeParser,
-  format?: string,
-): TDateTimeParserInput | null {
-  if (!messageCreatedAt || !Date.parse(messageCreatedAt)) {
-    console.warn(notValidDateWarning);
-    return null;
-  }
-
-  if (typeof formatDate === 'function') {
-    return formatDate(new Date(messageCreatedAt));
-  }
-
-  if (!tDateTimeParser) {
-    console.warn(noParsingFunctionWarning);
-    return null;
-  }
-
-  const parsedTime = tDateTimeParser(messageCreatedAt);
-
-  if (isDayOrMoment(parsedTime)) {
-    /**
-     * parsedTime.calendar is guaranteed on the type but is only
-     * available when a user calls dayjs.extend(calendar)
-     */
-    return calendar && parsedTime.calendar ? parsedTime.calendar() : parsedTime.format(format);
-  }
-
-  if (isDate(parsedTime)) {
-    return parsedTime.toDateString();
-  }
-
-  if (isNumberOrString(parsedTime)) {
-    return parsedTime;
-  }
-
-  return null;
-}
+import type { TimestampFormatterOptions } from '../../i18n/types';
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
 export type MessageTimestampProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
-  calendar?: boolean;
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = TimestampFormatterOptions & {
+  /* Adds a CSS class name to the component's outer `time` container. */
   customClass?: string;
-  format?: string;
-  message?: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>;
+  /* The `StreamChat` message object, which provides necessary data to the underlying UI components (overrides the value from `MessageContext`) */
+  message?: StreamMessage<StreamChatGenerics>;
 };
 
 const UnMemoizedMessageTimestamp = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: MessageTimestampProps<At, Ch, Co, Ev, Me, Re, Us>,
+  props: MessageTimestampProps<StreamChatGenerics>,
 ) => {
-  const {
-    calendar = false,
-    customClass = '',
-    format = defaultTimestampFormat,
-    message: propMessage,
-  } = props;
-
-  const { formatDate, message: contextMessage } = useMessageContext<At, Ch, Co, Ev, Me, Re, Us>(
-    'MessageTimestamp',
-  );
-  const { tDateTimeParser } = useTranslationContext('MessageTimestamp');
-
+  const { message: propMessage, ...timestampProps } = props;
+  const { message: contextMessage } =
+    useMessageContext<StreamChatGenerics>('MessageTimestamp');
+  const { Timestamp = DefaultTimestamp } = useComponentContext('MessageTimestamp');
   const message = propMessage || contextMessage;
-
-  const createdAt = message.created_at as string;
-
-  const when = useMemo(
-    () => getDateString(createdAt, formatDate, calendar, tDateTimeParser, format),
-    [formatDate, calendar, tDateTimeParser, format, createdAt],
-  );
-
-  if (!when) return null;
-
-  return (
-    <time className={customClass} dateTime={createdAt} title={createdAt}>
-      {when}
-    </time>
-  );
+  return <Timestamp timestamp={message.created_at} {...timestampProps} />;
 };
 
 export const MessageTimestamp = React.memo(

@@ -1,7 +1,6 @@
-/* eslint-disable no-param-reassign */
 /* eslint-disable no-underscore-dangle */
 import { StreamChat } from 'stream-chat';
-import { v4 as uuidv4 } from 'uuid';
+import { nanoid } from 'nanoid';
 
 const apiKey = 'API_KEY';
 const token = 'dummy_token';
@@ -18,9 +17,11 @@ const connectUser = (client, user) =>
     resolve();
   });
 
-function mockClient(client) {
+function mockClient(client, mocks = {}) {
   jest.spyOn(client, '_setToken').mockImplementation();
   jest.spyOn(client, '_setupConnection').mockImplementation();
+  jest.spyOn(client, 'getAppSettings').mockImplementation(mocks.getAppSettings);
+  jest.spyOn(client, 'queryReactions').mockImplementation(mocks.queryReactions);
   client.tokenManager = {
     getToken: jest.fn(() => token),
     tokenReady: jest.fn(() => true),
@@ -29,9 +30,9 @@ function mockClient(client) {
   return client;
 }
 
-export const getTestClient = () => mockClient(new StreamChat(apiKey));
+export const getTestClient = (mocks) => mockClient(new StreamChat(apiKey), mocks);
 
-export const getTestClientWithUser = async (user = { id: uuidv4() }) => {
+export const getTestClientWithUser = async (user = { id: nanoid() }) => {
   const client = mockClient(new StreamChat(apiKey));
   await connectUser(client, user);
   return client;
@@ -46,3 +47,5 @@ export const getRandomInt = (min, max) => {
 export * from './api';
 export * from './event';
 export * from './generator';
+export * from './translator';
+export * from './utils';

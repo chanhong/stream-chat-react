@@ -1,14 +1,16 @@
-/* eslint-disable jest-dom/prefer-to-have-class */
 import React from 'react';
-import renderer from 'react-test-renderer';
-import { cleanup, render } from '@testing-library/react';
-import '@testing-library/jest-dom';
 
+import { cleanup, render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom';
+import { toHaveNoViolations } from 'jest-axe';
+import { axe } from '../../../../axe-helper';
 import { TypingIndicator } from '../TypingIndicator';
 
 import { ChannelStateProvider } from '../../../context/ChannelStateContext';
 import { ChatProvider } from '../../../context/ChatContext';
+import { ComponentProvider } from '../../../context/ComponentContext';
 import { TypingProvider } from '../../../context/TypingContext';
+
 import {
   generateChannel,
   generateUser,
@@ -17,137 +19,114 @@ import {
   useMockedApis,
 } from '../../../mock-builders';
 
-afterEach(cleanup); // eslint-disable-line
+expect.extend(toHaveNoViolations);
 
-const alice = generateUser();
+const me = generateUser();
 
 async function renderComponent(typing = {}, threadList, value = {}) {
-  const client = await getTestClientWithUser(alice);
+  const client = await getTestClientWithUser(me);
 
   return render(
     <ChatProvider value={{ client }}>
       <ChannelStateProvider value={{ ...value }}>
-        <TypingProvider value={{ typing }}>
-          <TypingIndicator threadList={threadList} />
-        </TypingProvider>
+        <ComponentProvider value={{}}>
+          <TypingProvider value={{ typing }}>
+            <TypingIndicator threadList={threadList} />
+          </TypingProvider>
+        </ComponentProvider>
       </ChannelStateProvider>
     </ChatProvider>,
   );
 }
 
 describe('TypingIndicator', () => {
+  afterEach(cleanup);
+
   it('should render null without proper context values', () => {
-    const tree = renderer
-      .create(
-        <ChatProvider value={{}}>
-          <ChannelStateProvider value={{}}>
+    jest.spyOn(console, 'warn').mockImplementationOnce(() => null);
+    const { container } = render(
+      <ChatProvider value={{}}>
+        <ChannelStateProvider value={{}}>
+          <ComponentProvider value={{}}>
             <TypingIndicator />
-          </ChannelStateProvider>
-        </ChatProvider>,
-      )
-      .toJSON();
-    expect(tree).toMatchInlineSnapshot(`
-      <div
-        className="str-chat__typing-indicator "
-      >
-        <div
-          className="str-chat__typing-indicator__avatars"
-        />
-        <div
-          className="str-chat__typing-indicator__dots"
-        >
-          <span
-            className="str-chat__typing-indicator__dot"
-          />
-          <span
-            className="str-chat__typing-indicator__dot"
-          />
-          <span
-            className="str-chat__typing-indicator__dot"
-          />
-        </div>
-      </div>
-    `);
+          </ComponentProvider>
+        </ChannelStateProvider>
+      </ChatProvider>,
+    );
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('should render hidden indicator with empty typing', async () => {
-    const client = await getTestClientWithUser(alice);
-    const tree = renderer
-      .create(
-        <ChatProvider value={{ client }}>
-          <ChannelStateProvider value={{}}>
+    const client = await getTestClientWithUser(me);
+    const { container } = render(
+      <ChatProvider value={{ client }}>
+        <ChannelStateProvider value={{}}>
+          <ComponentProvider value={{}}>
             <TypingProvider value={{ typing: {} }}>
               <TypingIndicator />
             </TypingProvider>
-          </ChannelStateProvider>
-        </ChatProvider>,
-      )
-      .toJSON();
+          </ComponentProvider>
+        </ChannelStateProvider>
+      </ChatProvider>,
+    );
 
-    expect(tree).toMatchInlineSnapshot(`
-      <div
-        className="str-chat__typing-indicator "
-      >
-        <div
-          className="str-chat__typing-indicator__avatars"
-        />
-        <div
-          className="str-chat__typing-indicator__dots"
-        >
-          <span
-            className="str-chat__typing-indicator__dot"
-          />
-          <span
-            className="str-chat__typing-indicator__dot"
-          />
-          <span
-            className="str-chat__typing-indicator__dot"
-          />
-        </div>
-      </div>
-    `);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("should not render TypingIndicator when it's just you typing", async () => {
-    const { container } = await renderComponent({ alice: { user: alice } });
-    expect(container.firstChild.classList.contains('str-chat__typing-indicator--typing')).toBe(
-      false,
-    );
+    const { container } = await renderComponent({ alice: { user: me } });
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('should render TypingIndicator when someone else is typing', async () => {
-    const { container, getByTestId } = await renderComponent({
+    const { container } = await renderComponent({
       jessica: { user: { id: 'jessica', image: 'jessica.jpg' } },
     });
 
-    expect(container.firstChild.classList.contains('str-chat__typing-indicator--typing')).toBe(
-      true,
-    );
-    expect(getByTestId('avatar-img')).toHaveAttribute('src', 'jessica.jpg');
+    expect(container.firstChild).toHaveClass('str-chat__typing-indicator--typing');
+    expect(screen.getByText('{{ user }} is typing...')).toBeInTheDocument();
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
   });
 
   it('should render TypingIndicator when you and someone else are typing', async () => {
-    const { container, getAllByTestId, getByTestId } = await renderComponent({
-      alice: { user: alice },
-      jessica: { user: { id: 'jessica', image: 'jessica.jpg' } },
+    const otherUser = { user: { id: 'jessica', image: 'jessica.jpg' } };
+    const { container } = await renderComponent({
+      alice: { user: me },
+      jessica: otherUser,
     });
 
-    expect(container.firstChild.classList.contains('str-chat__typing-indicator--typing')).toBe(
-      true,
-    );
-    // eslint-disable-next-line jest-dom/prefer-in-document
-    expect(getAllByTestId('avatar-img')).toHaveLength(1);
-    expect(getByTestId('avatar-img')).toHaveAttribute('src', 'jessica.jpg');
+    expect(container.firstChild).toHaveClass('str-chat__typing-indicator--typing');
+    expect(screen.getByText('{{ user }} is typing...')).toBeInTheDocument();
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
   });
 
-  it('should render multiple avatars', async () => {
-    const { getAllByTestId } = await renderComponent({
-      alice: { user: alice },
+  it('should render TypingIndicator when multiple users are typing', async () => {
+    const { container } = await renderComponent({
+      alice: { user: me },
       jessica: { user: { id: 'jessica', image: 'jessica.jpg' } },
       joris: { user: { id: 'joris', image: 'joris.jpg' } },
       margriet: { user: { id: 'margriet', image: 'margriet.jpg' } },
     });
-    expect(getAllByTestId('avatar-img')).toHaveLength(3);
+    expect(
+      screen.getByText('{{ users }} and {{ user }} are typing...'),
+    ).toBeInTheDocument();
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
+  });
+
+  it('should render TypingIndicator when larger amount of users are typing', async () => {
+    const { container } = await renderComponent({
+      alice: { user: me },
+      axel: { user: { id: 'axel', image: 'axel.jpg' } },
+      jessica: { user: { id: 'jessica', image: 'jessica.jpg' } },
+      joris: { user: { id: 'joris', image: 'joris.jpg' } },
+      margriet: { user: { id: 'margriet', image: 'margriet.jpg' } },
+    });
+    expect(screen.getByText('{{ users }} and more are typing...')).toBeInTheDocument();
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
   });
 
   it('should render null if typing_events is disabled', async () => {
@@ -158,25 +137,27 @@ describe('TypingIndicator', () => {
     const channelConfig = { typing_events: false };
     await channel.watch();
 
-    const tree = renderer
-      .create(
-        <ChatProvider value={{ client }}>
-          <ChannelStateProvider value={{ channel, channelConfig }}>
+    const { container } = render(
+      <ChatProvider value={{ client }}>
+        <ChannelStateProvider value={{ channel, channelConfig }}>
+          <ComponentProvider value={{}}>
             <TypingProvider value={{ typing: {} }}>
               <TypingIndicator />
             </TypingProvider>
-          </ChannelStateProvider>
-        </ChatProvider>,
-      )
-      .toJSON();
+          </ComponentProvider>
+        </ChannelStateProvider>
+      </ChatProvider>,
+    );
 
-    expect(tree).toMatchInlineSnapshot(`null`);
+    expect(container).toBeEmptyDOMElement();
   });
 
   describe('TypingIndicator in thread', () => {
     let client;
     let ch;
     let channel;
+    const parent_id = 'sample-thread';
+    const otherUserId = 'test-user';
 
     beforeEach(async () => {
       client = await getTestClientWithUser();
@@ -190,62 +171,58 @@ describe('TypingIndicator', () => {
 
     it('should render TypingIndicator if user is typing in thread', async () => {
       const { container } = await renderComponent(
-        { example: { parent_id: 'sample-thread', user: 'test-user' } },
+        { [otherUserId]: { parent_id, user: otherUserId } },
         true,
         {
           channel,
           client,
-          thread: { id: 'sample-thread' },
+          thread: { id: parent_id },
         },
       );
 
-      expect(container.firstChild.classList.contains('str-chat__typing-indicator--typing')).toBe(
-        true,
-      );
+      expect(container.firstChild).toHaveClass('str-chat__typing-indicator--typing');
     });
 
     it('should not render TypingIndicator in main channel if user is typing in thread', async () => {
       const { container } = await renderComponent(
-        { example: { parent_id: 'sample-thread', user: 'test-user' } },
+        { [otherUserId]: { parent_id, user: otherUserId } },
         false,
         {
           channel,
           client,
-          thread: { id: 'sample-thread' },
+          thread: { id: parent_id },
         },
       );
 
-      expect(container.firstChild.classList.contains('str-chat__typing-indicator--typing')).toBe(
-        false,
-      );
+      expect(container).toBeEmptyDOMElement();
     });
 
     it('should not render TypingIndicator in thread if user is typing in main channel', async () => {
-      const { container } = await renderComponent({ example: { user: 'test-user' } }, true, {
-        channel,
-        client,
-        thread: { id: 'sample-thread' },
-      });
-
-      expect(container.firstChild.classList.contains('str-chat__typing-indicator--typing')).toBe(
-        false,
-      );
-    });
-
-    it('should not render TypingIndicator in thread if user is typing in another thread', async () => {
       const { container } = await renderComponent(
-        { example: { parent_id: 'sample-thread-2', user: 'test-user' } },
+        { [otherUserId]: { user: otherUserId } },
         true,
         {
           channel,
           client,
-          thread: { id: 'sample-thread' },
+          thread: { id: parent_id },
         },
       );
 
-      expect(container.firstChild.classList.contains('str-chat__typing-indicator--typing')).toBe(
-        false,
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it('should not render TypingIndicator in thread if user is typing in another thread', async () => {
+      const { container } = await renderComponent(
+        { example: { parent_id: 'sample-thread-2', user: otherUserId } },
+        true,
+        {
+          channel,
+          client,
+          thread: { id: parent_id },
+        },
       );
+
+      expect(container).toBeEmptyDOMElement();
     });
   });
 });

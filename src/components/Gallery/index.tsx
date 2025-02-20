@@ -1,4 +1,4 @@
+export * from './BaseImage';
 export * from './Gallery';
 export * from './Image';
-export * from './ModalImage';
-export * from './ModalWrapper';
+export * from './ModalGallery';

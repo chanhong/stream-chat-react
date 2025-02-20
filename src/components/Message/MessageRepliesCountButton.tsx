@@ -1,58 +1,43 @@
-import React from 'react';
-
-import { ReplyIcon } from './icons';
-
+import React, { MouseEventHandler } from 'react';
 import { useTranslationContext } from '../../context/TranslationContext';
 
-import type { ReactEventHandler } from './types';
-
 export type MessageRepliesCountButtonProps = {
+  /* If supplied, adds custom text to the end of a multiple replies message */
   labelPlural?: string;
+  /* If supplied, adds custom text to the end of a single reply message */
   labelSingle?: string;
-  onClick?: ReactEventHandler;
+  /* Function to navigate into an existing thread on a message */
+  onClick?: MouseEventHandler;
+  /* The amount of replies (i.e., threaded messages) on a message */
   reply_count?: number;
 };
 
-const UnMemoizedMessageRepliesCountButton: React.FC<MessageRepliesCountButtonProps> = (props) => {
+const UnMemoizedMessageRepliesCountButton = (props: MessageRepliesCountButtonProps) => {
   const { labelPlural, labelSingle, onClick, reply_count = 0 } = props;
 
   const { t } = useTranslationContext('MessageRepliesCountButton');
 
-  let singleReplyText;
-  let pluralReplyText;
+  if (!reply_count) return null;
 
-  if (reply_count === 1) {
-    if (labelSingle) {
-      singleReplyText = `1 ${labelSingle}`;
-    } else {
-      singleReplyText = t('1 reply');
-    }
+  let replyCountText = t('replyCount', { count: reply_count });
+
+  if (labelPlural && reply_count > 1) {
+    replyCountText = `${reply_count} ${labelPlural}`;
+  } else if (labelSingle) {
+    replyCountText = `1 ${labelSingle}`;
   }
 
-  if (reply_count && reply_count > 1) {
-    if (labelPlural) {
-      pluralReplyText = `${reply_count} ${labelPlural}`;
-    } else {
-      pluralReplyText = t('{{ replyCount }} replies', {
-        replyCount: reply_count,
-      });
-    }
-  }
-
-  if (reply_count && reply_count !== 0) {
-    return (
+  return (
+    <div className='str-chat__message-replies-count-button-wrapper'>
       <button
         className='str-chat__message-replies-count-button'
         data-testid='replies-count-button'
         onClick={onClick}
       >
-        <ReplyIcon />
-        {reply_count === 1 ? singleReplyText : pluralReplyText}
+        {replyCountText}
       </button>
-    );
-  }
-
-  return null;
+    </div>
+  );
 };
 
 export const MessageRepliesCountButton = React.memo(

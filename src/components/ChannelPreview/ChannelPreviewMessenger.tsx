@@ -1,52 +1,45 @@
 import React, { useRef } from 'react';
+import clsx from 'clsx';
 
+import { ChannelPreviewActionButtons as DefaultChannelPreviewActionButtons } from './ChannelPreviewActionButtons';
 import { Avatar as DefaultAvatar } from '../Avatar';
+import { useComponentContext } from '../../context';
 
 import type { ChannelPreviewUIComponentProps } from './ChannelPreview';
-
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
 const UnMemoizedChannelPreviewMessenger = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  SCG extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: ChannelPreviewUIComponentProps<At, Ch, Co, Ev, Me, Re, Us>,
+  props: ChannelPreviewUIComponentProps<SCG>,
 ) => {
   const {
     active,
     Avatar = DefaultAvatar,
     channel,
+    className: customClassName = '',
     displayImage,
     displayTitle,
-    latestMessage,
+    groupChannelDisplayInfo,
+    latestMessagePreview,
+    onSelect: customOnSelectChannel,
     setActiveChannel,
     unread,
     watchers,
   } = props;
 
-  const channelPreviewButton = useRef<HTMLButtonElement | null>(null);
+  const { ChannelPreviewActionButtons = DefaultChannelPreviewActionButtons } =
+    useComponentContext<SCG>();
 
-  const activeClass = active ? 'str-chat__channel-preview-messenger--active' : '';
-  const unreadClass = unread && unread >= 1 ? 'str-chat__channel-preview-messenger--unread' : '';
+  const channelPreviewButton = useRef<HTMLButtonElement | null>(null);
 
   const avatarName =
     displayTitle || channel.state.messages[channel.state.messages.length - 1]?.user?.id;
 
-  const onSelectChannel = () => {
-    if (setActiveChannel) {
+  const onSelectChannel = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (customOnSelectChannel) {
+      customOnSelectChannel(e);
+    } else if (setActiveChannel) {
       setActiveChannel(channel, watchers);
     }
     if (channelPreviewButton?.current) {
@@ -55,22 +48,50 @@ const UnMemoizedChannelPreviewMessenger = <
   };
 
   return (
-    <button
-      className={`str-chat__channel-preview-messenger ${unreadClass} ${activeClass}`}
-      data-testid='channel-preview-button'
-      onClick={onSelectChannel}
-      ref={channelPreviewButton}
-    >
-      <div className='str-chat__channel-preview-messenger--left'>
-        <Avatar image={displayImage} name={avatarName} size={40} />
-      </div>
-      <div className='str-chat__channel-preview-messenger--right'>
-        <div className='str-chat__channel-preview-messenger--name'>
-          <span>{displayTitle}</span>
+    <div className='str-chat__channel-preview-container'>
+      <ChannelPreviewActionButtons channel={channel} />
+      <button
+        aria-label={`Select Channel: ${displayTitle || ''}`}
+        aria-selected={active}
+        className={clsx(
+          `str-chat__channel-preview-messenger str-chat__channel-preview`,
+          active && 'str-chat__channel-preview-messenger--active',
+          unread && unread >= 1 && 'str-chat__channel-preview-messenger--unread',
+          customClassName,
+        )}
+        data-testid='channel-preview-button'
+        onClick={onSelectChannel}
+        ref={channelPreviewButton}
+        role='option'
+      >
+        <div className='str-chat__channel-preview-messenger--left'>
+          <Avatar
+            className='str-chat__avatar--channel-preview'
+            groupChannelDisplayInfo={groupChannelDisplayInfo}
+            image={displayImage}
+            name={avatarName}
+          />
         </div>
-        <div className='str-chat__channel-preview-messenger--last-message'>{latestMessage}</div>
-      </div>
-    </button>
+        <div className='str-chat__channel-preview-end'>
+          <div className='str-chat__channel-preview-end-first-row'>
+            <div className='str-chat__channel-preview-messenger--name'>
+              <span>{displayTitle}</span>
+            </div>
+            {!!unread && (
+              <div
+                className='str-chat__channel-preview-unread-badge'
+                data-testid='unread-badge'
+              >
+                {unread}
+              </div>
+            )}
+          </div>
+          <div className='str-chat__channel-preview-messenger--last-message'>
+            {latestMessagePreview}
+          </div>
+        </div>
+      </button>
+    </div>
   );
 };
 

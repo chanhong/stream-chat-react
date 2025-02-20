@@ -1,5 +1,7 @@
 import React, {
+  ComponentProps,
   PropsWithChildren,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -9,12 +11,68 @@ import React, {
 } from 'react';
 
 import debounce from 'lodash.debounce';
+import defaultsDeep from 'lodash.defaultsdeep';
 import throttle from 'lodash.throttle';
+import { nanoid } from 'nanoid';
+import clsx from 'clsx';
+
+import { initialState, makeChannelReducer } from './channelState';
+import { useCreateChannelStateContext } from './hooks/useCreateChannelStateContext';
+import { useCreateTypingContext } from './hooks/useCreateTypingContext';
+import { useEditMessageHandler } from './hooks/useEditMessageHandler';
+import { useIsMounted } from './hooks/useIsMounted';
+import { OnMentionAction, useMentionsHandlers } from './hooks/useMentionsHandlers';
+
 import {
+  LoadingErrorIndicator as DefaultLoadingErrorIndicator,
+  LoadingErrorIndicatorProps,
+} from '../Loading';
+import { LoadingChannel as DefaultLoadingIndicator } from './LoadingChannel';
+import { DropzoneProvider } from '../MessageInput/DropzoneProvider';
+
+import {
+  ChannelActionContextValue,
+  ChannelActionProvider,
+  ChannelNotifications,
+  ChannelStateProvider,
+  ComponentContextValue,
+  MarkReadWrapperOptions,
+  MessageToSend,
+  StreamMessage,
+  TypingProvider,
+  useChatContext,
+  useTranslationContext,
+  WithComponents,
+} from '../../context';
+
+import { CHANNEL_CONTAINER_ID } from './constants';
+import {
+  DEFAULT_HIGHLIGHT_DURATION,
+  DEFAULT_INITIAL_CHANNEL_PAGE_SIZE,
+  DEFAULT_JUMP_TO_PAGE_SIZE,
+  DEFAULT_NEXT_CHANNEL_PAGE_SIZE,
+  DEFAULT_THREAD_PAGE_SIZE,
+} from '../../constants/limits';
+
+import { hasMoreMessagesProbably } from '../MessageList';
+import {
+  getChatContainerClass,
+  useChannelContainerClasses,
+  useImageFlagEmojisOnWindowsClass,
+} from './hooks/useChannelContainerClasses';
+import { findInMsgSetByDate, findInMsgSetById, makeAddNotifications } from './utils';
+import { useThreadContext } from '../Threads';
+import { getChannel } from '../../utils';
+
+import type {
+  APIErrorResponse,
   ChannelAPIResponse,
+  ChannelMemberResponse,
+  ChannelQueryOptions,
   ChannelState,
+  ErrorFromResponse,
   Event,
-  logChatPromiseExecution,
+  EventAPIResponse,
   Message,
   MessageResponse,
   SendMessageAPIResponse,
@@ -23,251 +81,247 @@ import {
   UpdatedMessage,
   UserResponse,
 } from 'stream-chat';
-import { v4 as uuidv4 } from 'uuid';
-
-import { channelReducer, ChannelStateReducer, initialState } from './channelState';
-import { commonEmoji, defaultMinimalEmojis, emojiSetDef } from './emojiData';
-import { useCreateChannelStateContext } from './hooks/useCreateChannelStateContext';
-import { useCreateTypingContext } from './hooks/useCreateTypingContext';
-import { useEditMessageHandler } from './hooks/useEditMessageHandler';
-import { useIsMounted } from './hooks/useIsMounted';
-import { OnMentionAction, useMentionsHandlers } from './hooks/useMentionsHandlers';
-
-import { Attachment as DefaultAttachment } from '../Attachment/Attachment';
-import {
-  LoadingErrorIndicator as DefaultLoadingErrorIndicator,
-  LoadingIndicator as DefaultLoadingIndicator,
-  LoadingErrorIndicatorProps,
-} from '../Loading';
-import { MessageSimple } from '../Message/MessageSimple';
-
-import {
-  ChannelActionContextValue,
-  ChannelActionProvider,
-  MessageAttachments,
-  MessageToSend,
-} from '../../context/ChannelActionContext';
-import {
-  ChannelNotifications,
-  ChannelStateProvider,
-  StreamMessage,
-} from '../../context/ChannelStateContext';
-import { ComponentContextValue, ComponentProvider } from '../../context/ComponentContext';
-import { useChatContext } from '../../context/ChatContext';
-import { EmojiConfig, EmojiContextValue, EmojiProvider } from '../../context/EmojiContext';
-import { useTranslationContext } from '../../context/TranslationContext';
-import { TypingProvider } from '../../context/TypingContext';
-import defaultEmojiData from '../../stream-emoji.json';
-
-import type { Data as EmojiMartData } from 'emoji-mart';
-
+import type { MessageInputProps } from '../MessageInput';
 import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
+  ChannelUnreadUiState,
+  CustomTrigger,
+  DefaultStreamChatGenerics,
+  GiphyVersions,
+  ImageAttachmentSizeHandler,
+  SendMessageOptions,
+  UpdateMessageOptions,
+  VideoAttachmentSizeHandler,
 } from '../../types/types';
+import {
+  getImageAttachmentConfiguration,
+  getVideoAttachmentConfiguration,
+} from '../Attachment/attachment-sizing';
+import type { URLEnrichmentConfig } from '../MessageInput/hooks/useLinkPreviews';
+import { useSearchFocusedMessage } from '../../experimental/Search/hooks';
+
+type ChannelPropsForwardedToComponentContext<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = Pick<
+  ComponentContextValue<StreamChatGenerics>,
+  | 'Attachment'
+  | 'AttachmentPreviewList'
+  | 'AttachmentSelector'
+  | 'AttachmentSelectorInitiationButtonContents'
+  | 'AudioRecorder'
+  | 'AutocompleteSuggestionItem'
+  | 'AutocompleteSuggestionList'
+  | 'Avatar'
+  | 'BaseImage'
+  | 'CooldownTimer'
+  | 'CustomMessageActionsList'
+  | 'DateSeparator'
+  | 'EditMessageInput'
+  | 'EmojiPicker'
+  | 'emojiSearchIndex'
+  | 'EmptyStateIndicator'
+  | 'FileUploadIcon'
+  | 'GiphyPreviewMessage'
+  | 'HeaderComponent'
+  | 'Input'
+  | 'LinkPreviewList'
+  | 'LoadingIndicator'
+  | 'Message'
+  | 'MessageActions'
+  | 'MessageBouncePrompt'
+  | 'MessageDeleted'
+  | 'MessageListNotifications'
+  | 'MessageListMainPanel'
+  | 'MessageNotification'
+  | 'MessageOptions'
+  | 'MessageRepliesCountButton'
+  | 'MessageStatus'
+  | 'MessageSystem'
+  | 'MessageTimestamp'
+  | 'ModalGallery'
+  | 'PinIndicator'
+  | 'PollActions'
+  | 'PollContent'
+  | 'PollCreationDialog'
+  | 'PollHeader'
+  | 'PollOptionSelector'
+  | 'QuotedMessage'
+  | 'QuotedMessagePreview'
+  | 'QuotedPoll'
+  | 'reactionOptions'
+  | 'ReactionSelector'
+  | 'ReactionsList'
+  | 'ReactionsListModal'
+  | 'SendButton'
+  | 'StartRecordingAudioButton'
+  | 'ThreadHead'
+  | 'ThreadHeader'
+  | 'ThreadStart'
+  | 'Timestamp'
+  | 'TriggerProvider'
+  | 'TypingIndicator'
+  | 'UnreadMessagesNotification'
+  | 'UnreadMessagesSeparator'
+  | 'VirtualMessage'
+  | 'StopAIGenerationButton'
+  | 'StreamedMessageText'
+>;
+
+const isUserResponseArray = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>(
+  output: string[] | UserResponse<StreamChatGenerics>[],
+): output is UserResponse<StreamChatGenerics>[] =>
+  (output as UserResponse<StreamChatGenerics>[])[0]?.id != null;
 
 export type ChannelProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
+> = ChannelPropsForwardedToComponentContext<StreamChatGenerics> & {
   /** List of accepted file types */
   acceptedFiles?: string[];
-  /** Custom handler function that runs when the active channel has unread messages (i.e., when chat is running on a separate browser tab) */
+  /** Custom handler function that runs when the active channel has unread messages and the app is running on a separate browser tab */
   activeUnreadHandler?: (unread: number, documentTitle: string) => void;
-  /** Custom UI component to display a message attachment, defaults to and accepts same props as: [Attachment](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Attachment/Attachment.tsx) */
-  Attachment?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['Attachment'];
-  /** Optional UI component to override the default suggestion Header component, defaults to and accepts same props as: [Header](https://github.com/GetStream/stream-chat-react/blob/master/src/components/AutoCompleteTextarea/Header.tsx) */
-  AutocompleteSuggestionHeader?: ComponentContextValue<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >['AutocompleteSuggestionHeader'];
-  /** Optional UI component to override the default suggestion Item component, defaults to and accepts same props as: [Item](https://github.com/GetStream/stream-chat-react/blob/master/src/components/AutoCompleteTextarea/Item.js) */
-  AutocompleteSuggestionItem?: ComponentContextValue<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >['AutocompleteSuggestionItem'];
-  /** Optional UI component to override the default List component that displays suggestions, defaults to and accepts same props as: [List](https://github.com/GetStream/stream-chat-react/blob/master/src/components/AutoCompleteTextarea/List.js) */
-  AutocompleteSuggestionList?: ComponentContextValue<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >['AutocompleteSuggestionList'];
-  /** UI component to display a user's avatar, defaults to and accepts same props as: [Avatar](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Avatar/Avatar.tsx) */
-  Avatar?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['Avatar'];
   /** The connected and active channel */
-  channel?: StreamChannel<At, Ch, Co, Ev, Me, Re, Us>;
-  /** Custom UI component to display the slow mode cooldown timer, defaults to and accepts same props as: [CooldownTimer](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageInput/hooks/useCooldownTimer.tsx) */
-  CooldownTimer?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['CooldownTimer'];
-  /** Custom UI component for date separators, defaults to and accepts same props as: [DateSeparator](https://github.com/GetStream/stream-chat-react/blob/master/src/components/DateSeparator.tsx) */
-  DateSeparator?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['DateSeparator'];
+  channel?: StreamChannel<StreamChatGenerics>;
+  /**
+   * Optional configuration parameters used for the initial channel query.
+   * Applied only if the value of channel.initialized is false.
+   * If the channel instance has already been initialized (channel has been queried),
+   * then the channel query will be skipped and channelQueryOptions will not be applied.
+   */
+  channelQueryOptions?: ChannelQueryOptions<StreamChatGenerics>;
+  /** Custom action handler to override the default `client.deleteMessage(message.id)` function */
+  doDeleteMessageRequest?: (
+    message: StreamMessage<StreamChatGenerics>,
+  ) => Promise<MessageResponse<StreamChatGenerics>>;
   /** Custom action handler to override the default `channel.markRead` request function (advanced usage only) */
   doMarkReadRequest?: (
-    channel: StreamChannel<At, Ch, Co, Ev, Me, Re, Us>,
-  ) => Promise<MessageResponse<At, Ch, Co, Me, Re, Us>> | void;
+    channel: StreamChannel<StreamChatGenerics>,
+    setChannelUnreadUiState?: (state: ChannelUnreadUiState) => void,
+  ) => Promise<EventAPIResponse<StreamChatGenerics>> | void;
   /** Custom action handler to override the default `channel.sendMessage` request function (advanced usage only) */
   doSendMessageRequest?: (
-    channelId: string,
-    message: Message<At, Me, Us>,
-  ) => ReturnType<StreamChannel<At, Ch, Co, Ev, Me, Re, Us>['sendMessage']> | void;
+    channel: StreamChannel<StreamChatGenerics>,
+    message: Message<StreamChatGenerics>,
+    options?: SendMessageOptions,
+  ) => ReturnType<StreamChannel<StreamChatGenerics>['sendMessage']> | void;
   /** Custom action handler to override the default `client.updateMessage` request function (advanced usage only) */
   doUpdateMessageRequest?: (
     cid: string,
-    updatedMessage: UpdatedMessage<At, Ch, Co, Me, Re, Us>,
-  ) => ReturnType<StreamChat<At, Ch, Co, Ev, Me, Re, Us>['updateMessage']>;
-  /** Custom UI component to override default edit message input, defaults to and accepts same props as: [EditMessageForm](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageInput/EditMessageForm.tsx) */
-  EditMessageInput?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['EditMessageInput'];
-  /** Custom UI component to override default `NimbleEmoji` from `emoji-mart` */
-  Emoji?: EmojiContextValue['Emoji'];
-  /** Custom prop to override default `facebook.json` emoji data set from `emoji-mart` */
-  emojiData?: EmojiMartData;
-  /** Custom UI component for emoji button in input, defaults to and accepts same props as: [EmojiIconSmall](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageInput/icons.tsx) */
-  EmojiIcon?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['EmojiIcon'];
-  /** Custom UI component to override default `NimbleEmojiIndex` from `emoji-mart` */
-  EmojiIndex?: EmojiContextValue['EmojiIndex'];
-  /** Custom UI component to override default `NimblePicker` from `emoji-mart` */
-  EmojiPicker?: EmojiContextValue['EmojiPicker'];
+    updatedMessage: UpdatedMessage<StreamChatGenerics>,
+    options?: UpdateMessageOptions,
+  ) => ReturnType<StreamChat<StreamChatGenerics>['updateMessage']>;
+  /** If true, chat users will be able to drag and drop file uploads to the entire channel window */
+  dragAndDropWindow?: boolean;
   /** Custom UI component to be shown if no active channel is set, defaults to null and skips rendering the Channel component */
   EmptyPlaceholder?: React.ReactElement;
-  /** Custom UI component to be displayed when the `MessageList` is empty, , defaults to and accepts same props as: [EmptyStateIndicator](https://github.com/GetStream/stream-chat-react/blob/master/src/components/EmptyStateIndicator/EmptyStateIndicator.tsx)  */
-  EmptyStateIndicator?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['EmptyStateIndicator'];
-  /** Custom UI component for file upload icon, defaults to and accepts same props as: [FileUploadIcon](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageInput/icons.tsx) */
-  FileUploadIcon?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['FileUploadIcon'];
-  /** Custom UI component to render a Giphy preview in the `VirtualizedMessageList` */
-  GiphyPreviewMessage?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['GiphyPreviewMessage'];
-  /** Custom UI component to render at the top of the `MessageList` */
-  HeaderComponent?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['HeaderComponent'];
-  /** Custom UI component handling how the message input is rendered, defaults to and accepts the same props as [MessageInputFlat](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageInput/MessageInputFlat.tsx) */
-  Input?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['Input'];
+  /**
+   * A global flag to toggle the URL enrichment and link previews in `MessageInput` components.
+   * By default, the feature is disabled. Can be overridden on Thread, MessageList level through additionalMessageInputProps
+   * or directly on MessageInput level through urlEnrichmentConfig.
+   */
+  enrichURLForPreview?: URLEnrichmentConfig['enrichURLForPreview'];
+  /** Global configuration for link preview generation in all the MessageInput components */
+  enrichURLForPreviewConfig?: Omit<URLEnrichmentConfig, 'enrichURLForPreview'>;
+  /** The giphy version to render - check the keys of the [Image Object](https://developers.giphy.com/docs/api/schema#image-object) for possible values. Uses 'fixed_height' by default */
+  giphyVersion?: GiphyVersions;
+  /** A custom function to provide size configuration for image attachments */
+  imageAttachmentSizeHandler?: ImageAttachmentSizeHandler;
+  /**
+   * Allows to prevent triggering the channel.watch() call when mounting the component.
+   * That means that no channel data from the back-end will be received neither channel WS events will be delivered to the client.
+   * Preventing to initialize the channel on mount allows us to postpone the channel creation to a later point in time.
+   */
+  initializeOnMount?: boolean;
   /** Custom UI component to be shown if the channel query fails, defaults to and accepts same props as: [LoadingErrorIndicator](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Loading/LoadingErrorIndicator.tsx) */
   LoadingErrorIndicator?: React.ComponentType<LoadingErrorIndicatorProps>;
-  /** Custom UI component to render while the `MessageList` is loading new messages, defaults to and accepts same props as: [LoadingIndicator](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Loading/LoadingIndicator.tsx) */
-  LoadingIndicator?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['LoadingIndicator'];
+  /** Configuration parameter to mark the active channel as read when mounted (opened). By default, the channel is marked read on mount. */
+  markReadOnMount?: boolean;
   /** Maximum number of attachments allowed per message */
   maxNumberOfFiles?: number;
-  /** Custom UI component to display a message in the standard `MessageList`, defaults to and accepts the same props as: [MessageSimple](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Message/MessageSimple.tsx) */
-  Message?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['Message'];
-  /** Custom UI component for a deleted message, defaults to and accepts same props as: [MessageDeleted](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Message/MessageDeleted.tsx) */
-  MessageDeleted?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['MessageDeleted'];
-  /** Custom UI component that displays message and connection status notifications in the `MessageList`, defaults to and accepts same props as [DefaultMessageListNotifications](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageList/MessageList.tsx) */
-  MessageListNotifications?: ComponentContextValue<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >['MessageListNotifications'];
-  /** Custom UI component to display a notification when scrolled up the list and new messages arrive, defaults to and accepts same props as [MessageNotification](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageList/MessageNotification.tsx) */
-  MessageNotification?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['MessageNotification'];
-  /** Custom UI component for message options popup, defaults to and accepts same props as: [MessageOptions](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Message/MessageOptions.tsx) */
-  MessageOptions?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['MessageOptions'];
-  /** Custom UI component to display message replies, defaults to and accepts same props as: [MessageRepliesCountButton](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Message/MessageRepliesCountButton.tsx) */
-  MessageRepliesCountButton?: ComponentContextValue<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >['MessageRepliesCountButton'];
-  /** Custom UI component to display message delivery status, defaults to and accepts same props as: [MessageStatus](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Message/MessageStatus.tsx) */
-  MessageStatus?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['MessageStatus'];
-  /** Custom UI component to display system messages, defaults to and accepts same props as: [EventComponent](https://github.com/GetStream/stream-chat-react/blob/master/src/components/EventComponent/EventComponent.tsx) */
-  MessageSystem?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['MessageSystem'];
-  /** Custom UI component to display a timestamp on a message, defaults to and accepts same props as: [MessageTimestamp](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Message/MessageTimestamp.tsx) */
-  MessageTimestamp?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['MessageTimestamp'];
   /** Whether to allow multiple attachment uploads */
   multipleUploads?: boolean;
   /** Custom action handler function to run on click of an @mention in a message */
-  onMentionsClick?: OnMentionAction<Us>;
+  onMentionsClick?: OnMentionAction<StreamChatGenerics>;
   /** Custom action handler function to run on hover of an @mention in a message */
-  onMentionsHover?: OnMentionAction<Us>;
-  /** Custom UI component to override default pinned message indicator, defaults to and accepts same props as: [PinIndicator](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Message/icons.tsx) */
-  PinIndicator?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['PinIndicator'];
-  /** Custom UI component to override quoted message UI on a sent message, defaults to and accepts same props as: [QuotedMessage](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Message/QuotedMessage.tsx) */
-  QuotedMessage?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['QuotedMessage'];
-  /** Custom UI component to override the message input's quoted message preview, defaults to and accepts same props as: [QuotedMessagePreview](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageInput/QuotedMessagePreview.tsx) */
-  QuotedMessagePreview?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['QuotedMessagePreview'];
-  /** Custom UI component to display the reaction selector, defaults to and accepts same props as: [ReactionSelector](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Reactions/ReactionSelector.tsx) */
-  ReactionSelector?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['ReactionSelector'];
-  /** Custom UI component to display the list of reactions on a message, defaults to and accepts same props as: [ReactionsList](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Reactions/ReactionsList.tsx) */
-  ReactionsList?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['ReactionsList'];
-  /** Custom UI component for send button, defaults to and accepts same props as: [SendButton](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageInput/icons.tsx) */
-  SendButton?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['SendButton'];
+  onMentionsHover?: OnMentionAction<StreamChatGenerics>;
+  /** If `dragAndDropWindow` prop is true, the props to pass to the MessageInput component (overrides props placed directly on MessageInput) */
+  optionalMessageInputProps?: MessageInputProps<StreamChatGenerics, V>;
+  /** You can turn on/off thumbnail generation for video attachments */
+  shouldGenerateVideoThumbnail?: boolean;
   /** If true, skips the message data string comparison used to memoize the current channel messages (helpful for channels with 1000s of messages) */
   skipMessageDataMemoization?: boolean;
-  /** Custom UI component to display the header of a `Thread`, defaults to and accepts same props as: [DefaultThreadHeader](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Thread/Thread.tsx) */
-  ThreadHeader?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['ThreadHeader'];
-  /** Custom UI component to display the start of a threaded `MessageList`, defaults to and accepts same props as: [DefaultThreadStart](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Thread/Thread.tsx) */
-  ThreadStart?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['ThreadStart'];
-  /** Optional context provider that lets you override the default autocomplete triggers, defaults to: [DefaultTriggerProvider](https://github.com/GetStream/stream-chat-react/blob/master/src/components/MessageInput/DefaultTriggerProvider.tsx) */
-  TriggerProvider?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['TriggerProvider'];
-  /** Custom UI component for the typing indicator, defaults to and accepts same props as: [TypingIndicator](https://github.com/GetStream/stream-chat-react/blob/master/src/components/TypingIndicator/TypingIndicator.tsx) */
-  TypingIndicator?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['TypingIndicator'];
-  /** Custom UI component to display a message in the `VirtualizedMessageList`, defaults to and accepts same props as: [FixedHeightMessage](https://github.com/GetStream/stream-chat-react/blob/master/src/components/Message/FixedHeightMessage.tsx) */
-  VirtualMessage?: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us>['VirtualMessage'];
+  /** A custom function to provide size configuration for video attachments */
+  videoAttachmentSizeHandler?: VideoAttachmentSizeHandler;
+};
+
+const ChannelContainer = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>({
+  children,
+  className: additionalClassName,
+  ...props
+}: PropsWithChildren<ComponentProps<'div'>>) => {
+  const { customClasses, theme } = useChatContext<StreamChatGenerics>('Channel');
+  const { channelClass, chatClass } = useChannelContainerClasses({
+    customClasses,
+  });
+  const className = clsx(chatClass, theme, channelClass, additionalClassName);
+  return (
+    <div id={CHANNEL_CONTAINER_ID} {...props} className={className}>
+      {children}
+    </div>
+  );
 };
 
 const UnMemoizedChannel = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
 >(
-  props: PropsWithChildren<ChannelProps<At, Ch, Co, Ev, Me, Re, Us>>,
+  props: PropsWithChildren<ChannelProps<StreamChatGenerics, V>>,
 ) => {
-  const { channel: propsChannel, EmptyPlaceholder = null } = props;
+  const {
+    channel: propsChannel,
+    EmptyPlaceholder = null,
+    LoadingErrorIndicator,
+    LoadingIndicator = DefaultLoadingIndicator,
+  } = props;
 
-  const { channel: contextChannel } = useChatContext<At, Ch, Co, Ev, Me, Re, Us>('Channel');
+  const { channel: contextChannel, channelsQueryState } =
+    useChatContext<StreamChatGenerics>('Channel');
 
   const channel = propsChannel || contextChannel;
 
-  if (!channel?.cid) return EmptyPlaceholder;
+  if (channelsQueryState.queryInProgress === 'reload' && LoadingIndicator) {
+    return (
+      <ChannelContainer>
+        <LoadingIndicator />
+      </ChannelContainer>
+    );
+  }
+
+  if (channelsQueryState.error && LoadingErrorIndicator) {
+    return (
+      <ChannelContainer>
+        <LoadingErrorIndicator error={channelsQueryState.error} />
+      </ChannelContainer>
+    );
+  }
+
+  if (!channel?.cid) {
+    return <ChannelContainer>{EmptyPlaceholder}</ChannelContainer>;
+  }
 
   return <ChannelInner {...props} channel={channel} key={channel.cid} />;
 };
 
 const ChannelInner = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
 >(
   props: PropsWithChildren<
-    ChannelProps<At, Ch, Co, Ev, Me, Re, Us> & {
-      channel: StreamChannel<At, Ch, Co, Ev, Me, Re, Us>;
+    ChannelProps<StreamChatGenerics, V> & {
+      channel: StreamChannel<StreamChatGenerics>;
       key: string;
     }
   >,
@@ -276,56 +330,75 @@ const ChannelInner = <
     acceptedFiles,
     activeUnreadHandler,
     channel,
+    channelQueryOptions: propChannelQueryOptions,
     children,
+    doDeleteMessageRequest,
     doMarkReadRequest,
     doSendMessageRequest,
     doUpdateMessageRequest,
-    emojiData = defaultEmojiData,
+    dragAndDropWindow = false,
+    enrichURLForPreviewConfig,
+    initializeOnMount = true,
     LoadingErrorIndicator = DefaultLoadingErrorIndicator,
     LoadingIndicator = DefaultLoadingIndicator,
+    markReadOnMount = true,
     maxNumberOfFiles,
     multipleUploads = true,
     onMentionsClick,
     onMentionsHover,
+    optionalMessageInputProps = {},
     skipMessageDataMemoization,
   } = props;
 
-  const { client, customClasses, mutes, theme, useImageFlagEmojisOnWindows } = useChatContext<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >('Channel');
+  const channelQueryOptions: ChannelQueryOptions<StreamChatGenerics> & {
+    messages: { limit: number };
+  } = useMemo(
+    () =>
+      defaultsDeep(propChannelQueryOptions, {
+        messages: { limit: DEFAULT_INITIAL_CHANNEL_PAGE_SIZE },
+      }),
+    [propChannelQueryOptions],
+  );
+
+  const { client, customClasses, latestMessageDatesByChannels, mutes, searchController } =
+    useChatContext<StreamChatGenerics>('Channel');
   const { t } = useTranslationContext('Channel');
+  const chatContainerClass = getChatContainerClass(customClasses?.chatContainer);
+  const windowsEmojiClass = useImageFlagEmojisOnWindowsClass();
+  const thread = useThreadContext();
 
   const [channelConfig, setChannelConfig] = useState(channel.getConfig());
   const [notifications, setNotifications] = useState<ChannelNotifications>([]);
-  const [quotedMessage, setQuotedMessage] = useState<StreamMessage<At, Ch, Co, Ev, Me, Re, Us>>();
+  const [quotedMessage, setQuotedMessage] = useState<StreamMessage<StreamChatGenerics>>();
+  const [channelUnreadUiState, _setChannelUnreadUiState] =
+    useState<ChannelUnreadUiState>();
 
-  const notificationTimeouts: Array<NodeJS.Timeout> = [];
+  const notificationTimeouts = useRef<Array<NodeJS.Timeout>>([]);
 
-  const [state, dispatch] = useReducer<ChannelStateReducer<At, Ch, Co, Ev, Me, Re, Us>>(
+  const channelReducer = useMemo(() => makeChannelReducer<StreamChatGenerics>(), []);
+
+  const [state, dispatch] = useReducer(
     channelReducer,
-    initialState,
+    // channel.initialized === false if client.channel().query() was not called, e.g. ChannelList is not used
+    // => Channel will call channel.watch() in useLayoutEffect => state.loading is used to signal the watch() call state
+    {
+      ...initialState,
+      hasMore: channel.state.messagePagination.hasPrev,
+      loading: !channel.initialized,
+    },
   );
-
+  const jumpToMessageFromSearch = useSearchFocusedMessage();
   const isMounted = useIsMounted();
 
   const originalTitle = useRef('');
-  const lastRead = useRef(new Date());
+  const lastRead = useRef<Date | undefined>(undefined);
   const online = useRef(true);
 
-  const channelCapabilitiesArray = channel.data?.own_capabilities as string[];
+  const clearHighlightedMessageTimeoutId = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
-  const emojiConfig: EmojiConfig = {
-    commonEmoji,
-    defaultMinimalEmojis,
-    emojiData,
-    emojiSetDef,
-  };
+  const channelCapabilitiesArray = channel.data?.own_capabilities as string[];
 
   const throttledCopyStateFromChannel = throttle(
     () => dispatch({ channel, type: 'copyStateFromChannelOnEvent' }),
@@ -336,29 +409,66 @@ const ChannelInner = <
     },
   );
 
-  const markRead = () => {
-    if (channel.disconnected || !channelConfig?.read_events) {
-      return;
-    }
+  const setChannelUnreadUiState = useMemo(
+    () =>
+      throttle(_setChannelUnreadUiState, 200, {
+        leading: true,
+        trailing: false,
+      }),
+    [],
+  );
 
-    lastRead.current = new Date();
+  const markRead = useMemo(
+    () =>
+      throttle(
+        async (options?: MarkReadWrapperOptions) => {
+          const { updateChannelUiUnreadState = true } = options ?? {};
+          if (channel.disconnected || !channelConfig?.read_events) {
+            return;
+          }
 
-    if (doMarkReadRequest) {
-      doMarkReadRequest(channel);
-    } else {
-      logChatPromiseExecution(channel.markRead(), 'mark read');
-    }
+          lastRead.current = new Date();
 
-    if (activeUnreadHandler) {
-      activeUnreadHandler(0, originalTitle.current);
-    } else if (originalTitle.current) {
-      document.title = originalTitle.current;
-    }
-  };
+          try {
+            if (doMarkReadRequest) {
+              doMarkReadRequest(
+                channel,
+                updateChannelUiUnreadState ? setChannelUnreadUiState : undefined,
+              );
+            } else {
+              const markReadResponse = await channel.markRead();
+              if (updateChannelUiUnreadState && markReadResponse) {
+                _setChannelUnreadUiState({
+                  last_read: lastRead.current,
+                  last_read_message_id: markReadResponse.event.last_read_message_id,
+                  unread_messages: 0,
+                });
+              }
+            }
 
-  const markReadThrottled = throttle(markRead, 500, { leading: true, trailing: true });
+            if (activeUnreadHandler) {
+              activeUnreadHandler(0, originalTitle.current);
+            } else if (originalTitle.current) {
+              document.title = originalTitle.current;
+            }
+          } catch (e) {
+            console.error(t<string>('Failed to mark channel as read'));
+          }
+        },
+        500,
+        { leading: true, trailing: false },
+      ),
+    [
+      activeUnreadHandler,
+      channel,
+      channelConfig,
+      doMarkReadRequest,
+      setChannelUnreadUiState,
+      t,
+    ],
+  );
 
-  const handleEvent = (event: Event<At, Ch, Co, Ev, Me, Re, Us>) => {
+  const handleEvent = async (event: Event<StreamChatGenerics>) => {
     if (event.message) {
       dispatch({
         channel,
@@ -367,7 +477,8 @@ const ChannelInner = <
       });
     }
 
-    if (event.type === 'user.watching.start' || event.type === 'user.watching.stop') return;
+    if (event.type === 'user.watching.start' || event.type === 'user.watching.stop')
+      return;
 
     if (event.type === 'typing.start' || event.type === 'typing.stop') {
       return dispatch({ channel, type: 'setTyping' });
@@ -378,16 +489,15 @@ const ChannelInner = <
     }
 
     if (event.type === 'message.new') {
-      let mainChannelUpdated = true;
+      const mainChannelUpdated =
+        !event.message?.parent_id || event.message?.show_in_channel;
 
-      if (event.message?.parent_id && !event.message?.show_in_channel) {
-        mainChannelUpdated = false;
-      }
-
-      if (mainChannelUpdated && event.message?.user?.id !== client.userID) {
-        if (!document.hidden) {
-          markReadThrottled();
-        } else if (channelConfig?.read_events && !channel.muteStatus().muted) {
+      if (mainChannelUpdated) {
+        if (
+          document.hidden &&
+          channelConfig?.read_events &&
+          !channel.muteStatus().muted
+        ) {
           const unread = channel.countUnread(lastRead.current);
 
           if (activeUnreadHandler) {
@@ -397,6 +507,50 @@ const ChannelInner = <
           }
         }
       }
+
+      if (
+        event.message?.user?.id === client.userID &&
+        event?.message?.created_at &&
+        event?.message?.cid
+      ) {
+        const messageDate = new Date(event.message.created_at);
+        const cid = event.message.cid;
+
+        if (
+          !latestMessageDatesByChannels[cid] ||
+          latestMessageDatesByChannels[cid].getTime() < messageDate.getTime()
+        ) {
+          latestMessageDatesByChannels[cid] = messageDate;
+        }
+      }
+    }
+
+    if (event.type === 'user.deleted') {
+      const oldestID = channel.state?.messages?.[0]?.id;
+
+      /**
+       * As the channel state is not normalized we re-fetch the channel data. Thus, we avoid having to search for user references in the channel state.
+       */
+      // FIXME: we should use channelQueryOptions if they are available
+      await channel.query({
+        messages: { id_lt: oldestID, limit: DEFAULT_NEXT_CHANNEL_PAGE_SIZE },
+        watchers: { limit: DEFAULT_NEXT_CHANNEL_PAGE_SIZE },
+      });
+    }
+
+    if (event.type === 'notification.mark_unread')
+      _setChannelUnreadUiState((prev) => {
+        if (!(event.last_read_at && event.user)) return prev;
+        return {
+          first_unread_message_id: event.first_unread_message_id,
+          last_read: new Date(event.last_read_at),
+          last_read_message_id: event.last_read_message_id,
+          unread_messages: event.unread_messages ?? 0,
+        };
+      });
+
+    if (event.type === 'channel.truncated' && event.cid === channel.cid) {
+      _setChannelUnreadUiState(undefined);
     }
 
     throttledCopyStateFromChannel();
@@ -407,14 +561,29 @@ const ChannelInner = <
     let errored = false;
     let done = false;
 
-    const onVisibilityChange = () => {
-      if (!document.hidden) markRead();
-    };
-
     (async () => {
-      if (!channel.initialized) {
+      if (!channel.initialized && initializeOnMount) {
         try {
-          await channel.watch();
+          // if active channel has been set without id, we will create a temporary channel id from its member IDs
+          // to keep track of the /query request in progress. This is the same approach of generating temporary id
+          // that the JS client uses to keep track of channel in client.activeChannels
+          const members: string[] = [];
+          if (!channel.id && channel.data?.members) {
+            for (const member of channel.data.members) {
+              let userId: string | undefined;
+              if (typeof member === 'string') {
+                userId = member;
+              } else if (typeof member === 'object') {
+                const { user, user_id } =
+                  member as ChannelMemberResponse<StreamChatGenerics>;
+                userId = user_id || user?.id;
+              }
+              if (userId) {
+                members.push(userId);
+              }
+            }
+          }
+          await getChannel({ channel, client, members, options: channelQueryOptions });
           const config = channel.getConfig();
           setChannelConfig(config);
         } catch (e) {
@@ -427,10 +596,27 @@ const ChannelInner = <
       originalTitle.current = document.title;
 
       if (!errored) {
-        dispatch({ channel, type: 'initStateFromChannel' });
-        if (channel.countUnread() > 0) markRead();
+        dispatch({
+          channel,
+          hasMore: channel.state.messagePagination.hasPrev,
+          type: 'initStateFromChannel',
+        });
+
+        if (client.user?.id && channel.state.read[client.user.id]) {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { user, ...ownReadState } = channel.state.read[client.user.id];
+          _setChannelUnreadUiState(ownReadState);
+        }
+        /**
+         * TODO: maybe pass last_read to the countUnread method to get proper value
+         * combined with channel.countUnread adjustment (_countMessageAsUnread)
+         * to allow counting own messages too
+         *
+         * const lastRead = channel.state.read[client.userID as string].last_read;
+         */
+        if (channel.countUnread() > 0 && markReadOnMount)
+          markRead({ updateChannelUiUnreadState: false });
         // The more complex sync logic is done in Chat
-        document.addEventListener('visibilitychange', onVisibilityChange);
         client.on('connection.changed', handleEvent);
         client.on('connection.recovered', handleEvent);
         client.on('user.updated', handleEvent);
@@ -438,84 +624,110 @@ const ChannelInner = <
         channel.on(handleEvent);
       }
     })();
+    const notificationTimeoutsRef = notificationTimeouts.current;
 
     return () => {
       if (errored || !done) return;
-      document.removeEventListener('visibilitychange', onVisibilityChange);
       channel?.off(handleEvent);
       client.off('connection.changed', handleEvent);
       client.off('connection.recovered', handleEvent);
-      client.off('user.updated', handleEvent);
       client.off('user.deleted', handleEvent);
-      notificationTimeouts.forEach(clearTimeout);
+      notificationTimeoutsRef.forEach(clearTimeout);
     };
-  }, [channel.cid]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    channel.cid,
+    channelQueryOptions,
+    doMarkReadRequest,
+    channelConfig?.read_events,
+    initializeOnMount,
+  ]);
 
   useEffect(() => {
-    if (state.thread && state.messages?.length) {
-      for (let i = state.messages.length - 1; i >= 0; i -= 1) {
-        if (state.messages[i].id === state.thread.id) {
-          dispatch({ message: state.messages[i], type: 'setThread' });
-          break;
-        }
-      }
-    }
+    if (!state.thread) return;
+
+    const message = state.messages?.find((m) => m.id === state.thread?.id);
+
+    if (message) dispatch({ message, type: 'setThread' });
   }, [state.messages, state.thread]);
+
+  const handleHighlightedMessageChange = useCallback(
+    ({
+      highlightDuration,
+      highlightedMessageId,
+    }: {
+      highlightedMessageId: string;
+      highlightDuration?: number;
+    }) => {
+      dispatch({
+        channel,
+        highlightedMessageId,
+        type: 'jumpToMessageFinished',
+      });
+      if (clearHighlightedMessageTimeoutId.current) {
+        clearTimeout(clearHighlightedMessageTimeoutId.current);
+      }
+      clearHighlightedMessageTimeoutId.current = setTimeout(() => {
+        if (searchController._internalState.getLatestValue().focusedMessage) {
+          searchController._internalState.partialNext({ focusedMessage: undefined });
+        }
+        clearHighlightedMessageTimeoutId.current = null;
+        dispatch({ type: 'clearHighlightedMessage' });
+      }, highlightDuration ?? DEFAULT_HIGHLIGHT_DURATION);
+    },
+    [channel, searchController],
+  );
+
+  useEffect(() => {
+    if (!jumpToMessageFromSearch?.id) return;
+    handleHighlightedMessageChange({ highlightedMessageId: jumpToMessageFromSearch.id });
+  }, [jumpToMessageFromSearch, handleHighlightedMessageChange]);
 
   /** MESSAGE */
 
   // Adds a temporary notification to message list, will be removed after 5 seconds
-  const addNotification = (text: string, type: 'success' | 'error') => {
-    if (typeof text !== 'string' || (type !== 'success' && type !== 'error')) {
-      return;
-    }
-
-    const id = uuidv4();
-
-    setNotifications((prevNotifications) => [...prevNotifications, { id, text, type }]);
-
-    const timeout = setTimeout(
-      () =>
-        setNotifications((prevNotifications) =>
-          prevNotifications.filter((notification) => notification.id !== id),
-        ),
-      5000,
-    );
-
-    notificationTimeouts.push(timeout);
-  };
-
-  const loadMoreFinished = debounce(
-    (hasMore: boolean, messages: ChannelState<At, Ch, Co, Ev, Me, Re, Us>['messages']) => {
-      if (!isMounted.current) return;
-      dispatch({ hasMore, messages, type: 'loadMoreFinished' });
-    },
-    2000,
-    {
-      leading: true,
-      trailing: true,
-    },
+  const addNotification = useMemo(
+    () => makeAddNotifications(setNotifications, notificationTimeouts.current),
+    [],
   );
 
-  const loadMore = async (limit = 100) => {
-    if (!online.current || !window.navigator.onLine) return 0;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const loadMoreFinished = useCallback(
+    debounce(
+      (hasMore: boolean, messages: ChannelState<StreamChatGenerics>['messages']) => {
+        if (!isMounted.current) return;
+        dispatch({ hasMore, messages, type: 'loadMoreFinished' });
+      },
+      2000,
+      { leading: true, trailing: true },
+    ),
+    [],
+  );
+
+  const loadMore = async (limit = DEFAULT_NEXT_CHANNEL_PAGE_SIZE) => {
+    if (
+      !online.current ||
+      !window.navigator.onLine ||
+      !channel.state.messagePagination.hasPrev
+    )
+      return 0;
 
     // prevent duplicate loading events...
     const oldestMessage = state?.messages?.[0];
 
-    if (state.loadingMore || oldestMessage?.status !== 'received') return 0;
-
-    // initial state loads with up to 25 messages, so if less than 25 no need for additional query
-    if (channel.state.messages.length < 25) {
-      loadMoreFinished(false, channel.state.messages);
-      return channel.state.messages.length;
+    if (
+      state.loadingMore ||
+      state.loadingMoreNewer ||
+      oldestMessage?.status !== 'received'
+    ) {
+      return 0;
     }
 
     dispatch({ loadingMore: true, type: 'setLoadingMore' });
 
     const oldestID = oldestMessage?.id;
     const perPage = limit;
-    let queryResponse: ChannelAPIResponse<At, Ch, Co, Me, Re, Us>;
+    let queryResponse: ChannelAPIResponse<StreamChatGenerics>;
 
     try {
       queryResponse = await channel.query({
@@ -528,19 +740,247 @@ const ChannelInner = <
       return 0;
     }
 
-    const hasMoreMessages = queryResponse.messages.length === perPage;
-    loadMoreFinished(hasMoreMessages, channel.state.messages);
+    loadMoreFinished(channel.state.messagePagination.hasPrev, channel.state.messages);
 
     return queryResponse.messages.length;
   };
 
+  const loadMoreNewer = async (limit = DEFAULT_NEXT_CHANNEL_PAGE_SIZE) => {
+    if (
+      !online.current ||
+      !window.navigator.onLine ||
+      !channel.state.messagePagination.hasNext
+    )
+      return 0;
+
+    const newestMessage = state?.messages?.[state?.messages?.length - 1];
+    if (state.loadingMore || state.loadingMoreNewer) return 0;
+
+    dispatch({ loadingMoreNewer: true, type: 'setLoadingMoreNewer' });
+
+    const newestId = newestMessage?.id;
+    const perPage = limit;
+    let queryResponse: ChannelAPIResponse<StreamChatGenerics>;
+
+    try {
+      queryResponse = await channel.query({
+        messages: { id_gt: newestId, limit: perPage },
+        watchers: { limit: perPage },
+      });
+    } catch (e) {
+      console.warn('message pagination request failed with error', e);
+      dispatch({ loadingMoreNewer: false, type: 'setLoadingMoreNewer' });
+      return 0;
+    }
+
+    dispatch({
+      hasMoreNewer: channel.state.messagePagination.hasNext,
+      messages: channel.state.messages,
+      type: 'loadMoreNewerFinished',
+    });
+    return queryResponse.messages.length;
+  };
+
+  const jumpToMessage: ChannelActionContextValue<StreamChatGenerics>['jumpToMessage'] =
+    useCallback(
+      async (
+        messageId,
+        messageLimit = DEFAULT_JUMP_TO_PAGE_SIZE,
+        highlightDuration = DEFAULT_HIGHLIGHT_DURATION,
+      ) => {
+        dispatch({ loadingMore: true, type: 'setLoadingMore' });
+        await channel.state.loadMessageIntoState(messageId, undefined, messageLimit);
+
+        loadMoreFinished(channel.state.messagePagination.hasPrev, channel.state.messages);
+        handleHighlightedMessageChange({
+          highlightDuration,
+          highlightedMessageId: messageId,
+        });
+      },
+      [channel, handleHighlightedMessageChange, loadMoreFinished],
+    );
+
+  const jumpToLatestMessage: ChannelActionContextValue<StreamChatGenerics>['jumpToLatestMessage'] =
+    useCallback(async () => {
+      await channel.state.loadMessageIntoState('latest');
+      loadMoreFinished(channel.state.messagePagination.hasPrev, channel.state.messages);
+      dispatch({
+        type: 'jumpToLatestMessage',
+      });
+    }, [channel, loadMoreFinished]);
+
+  const jumpToFirstUnreadMessage: ChannelActionContextValue<StreamChatGenerics>['jumpToFirstUnreadMessage'] =
+    useCallback(
+      async (
+        queryMessageLimit = DEFAULT_JUMP_TO_PAGE_SIZE,
+        highlightDuration = DEFAULT_HIGHLIGHT_DURATION,
+      ) => {
+        if (!channelUnreadUiState?.unread_messages) return;
+        let lastReadMessageId = channelUnreadUiState?.last_read_message_id;
+        let firstUnreadMessageId = channelUnreadUiState?.first_unread_message_id;
+        let isInCurrentMessageSet = false;
+
+        if (firstUnreadMessageId) {
+          const result = findInMsgSetById(firstUnreadMessageId, channel.state.messages);
+          isInCurrentMessageSet = result.index !== -1;
+        } else if (lastReadMessageId) {
+          const result = findInMsgSetById(lastReadMessageId, channel.state.messages);
+          isInCurrentMessageSet = !!result.target;
+          firstUnreadMessageId =
+            result.index > -1 ? channel.state.messages[result.index + 1]?.id : undefined;
+        } else {
+          const lastReadTimestamp = channelUnreadUiState.last_read.getTime();
+          const { index: lastReadMessageIndex, target: lastReadMessage } =
+            findInMsgSetByDate(
+              channelUnreadUiState.last_read,
+              channel.state.messages,
+              true,
+            );
+
+          if (lastReadMessage) {
+            firstUnreadMessageId = channel.state.messages[lastReadMessageIndex + 1]?.id;
+            isInCurrentMessageSet = !!firstUnreadMessageId;
+            lastReadMessageId = lastReadMessage.id;
+          } else {
+            dispatch({ loadingMore: true, type: 'setLoadingMore' });
+            let messages;
+            try {
+              messages = (
+                await channel.query(
+                  {
+                    messages: {
+                      created_at_around: channelUnreadUiState.last_read.toISOString(),
+                      limit: queryMessageLimit,
+                    },
+                  },
+                  'new',
+                )
+              ).messages;
+            } catch (e) {
+              addNotification(t('Failed to jump to the first unread message'), 'error');
+              loadMoreFinished(
+                channel.state.messagePagination.hasPrev,
+                channel.state.messages,
+              );
+              return;
+            }
+
+            const firstMessageWithCreationDate = messages.find((msg) => msg.created_at);
+            if (!firstMessageWithCreationDate) {
+              addNotification(t('Failed to jump to the first unread message'), 'error');
+              loadMoreFinished(
+                channel.state.messagePagination.hasPrev,
+                channel.state.messages,
+              );
+              return;
+            }
+            const firstMessageTimestamp = new Date(
+              firstMessageWithCreationDate.created_at as string,
+            ).getTime();
+            if (lastReadTimestamp < firstMessageTimestamp) {
+              // whole channel is unread
+              firstUnreadMessageId = firstMessageWithCreationDate.id;
+            } else {
+              const result = findInMsgSetByDate(channelUnreadUiState.last_read, messages);
+              lastReadMessageId = result.target?.id;
+            }
+            loadMoreFinished(
+              channel.state.messagePagination.hasPrev,
+              channel.state.messages,
+            );
+          }
+        }
+
+        if (!firstUnreadMessageId && !lastReadMessageId) {
+          addNotification(t('Failed to jump to the first unread message'), 'error');
+          return;
+        }
+
+        if (!isInCurrentMessageSet) {
+          dispatch({ loadingMore: true, type: 'setLoadingMore' });
+          try {
+            const targetId = (firstUnreadMessageId ?? lastReadMessageId) as string;
+            await channel.state.loadMessageIntoState(
+              targetId,
+              undefined,
+              queryMessageLimit,
+            );
+            /**
+             * if the index of the last read message on the page is beyond the half of the page,
+             * we have arrived to the oldest page of the channel
+             */
+            const indexOfTarget = channel.state.messages.findIndex(
+              (message) => message.id === targetId,
+            ) as number;
+            loadMoreFinished(
+              channel.state.messagePagination.hasPrev,
+              channel.state.messages,
+            );
+            firstUnreadMessageId =
+              firstUnreadMessageId ?? channel.state.messages[indexOfTarget + 1]?.id;
+          } catch (e) {
+            addNotification(t('Failed to jump to the first unread message'), 'error');
+            loadMoreFinished(
+              channel.state.messagePagination.hasPrev,
+              channel.state.messages,
+            );
+            return;
+          }
+        }
+
+        if (!firstUnreadMessageId) {
+          addNotification(t('Failed to jump to the first unread message'), 'error');
+          return;
+        }
+        if (!channelUnreadUiState.first_unread_message_id)
+          _setChannelUnreadUiState({
+            ...channelUnreadUiState,
+            first_unread_message_id: firstUnreadMessageId,
+            last_read_message_id: lastReadMessageId,
+          });
+        handleHighlightedMessageChange({
+          highlightDuration,
+          highlightedMessageId: firstUnreadMessageId,
+        });
+      },
+      [
+        addNotification,
+        channel,
+        handleHighlightedMessageChange,
+        loadMoreFinished,
+        t,
+        channelUnreadUiState,
+      ],
+    );
+
+  const deleteMessage = useCallback(
+    async (
+      message: StreamMessage<StreamChatGenerics>,
+    ): Promise<MessageResponse<StreamChatGenerics>> => {
+      if (!message?.id) {
+        throw new Error('Cannot delete a message - missing message ID.');
+      }
+      let deletedMessage;
+      if (doDeleteMessageRequest) {
+        deletedMessage = await doDeleteMessageRequest(message);
+      } else {
+        const result = await client.deleteMessage(message.id);
+        deletedMessage = result.message;
+      }
+
+      return deletedMessage;
+    },
+    [client, doDeleteMessageRequest],
+  );
+
   const updateMessage = (
-    updatedMessage:
-      | MessageToSend<At, Ch, Co, Ev, Me, Re, Us>
-      | StreamMessage<At, Ch, Co, Ev, Me, Re, Us>,
+    updatedMessage: MessageToSend<StreamChatGenerics> | StreamMessage<StreamChatGenerics>,
   ) => {
     // add the message to the local channel state
-    channel.state.addMessageSorted(updatedMessage as MessageResponse<At, Ch, Co, Me, Re, Us>, true);
+    channel.state.addMessageSorted(
+      updatedMessage as MessageResponse<StreamChatGenerics>,
+      true,
+    );
 
     dispatch({
       channel,
@@ -549,18 +989,15 @@ const ChannelInner = <
     });
   };
 
-  const isUserResponseArray = (
-    output: string[] | UserResponse<Us>[],
-  ): output is UserResponse<Us>[] => (output as UserResponse<Us>[])[0]?.id != null;
-
   const doSendMessage = async (
-    message: MessageToSend<At, Ch, Co, Ev, Me, Re, Us> | StreamMessage<At, Ch, Co, Ev, Me, Re, Us>,
-    customMessageData?: Partial<Message<At, Me, Us>>,
+    message: MessageToSend<StreamChatGenerics> | StreamMessage<StreamChatGenerics>,
+    customMessageData?: Partial<Message<StreamChatGenerics>>,
+    options?: SendMessageOptions,
   ) => {
     const { attachments, id, mentioned_users = [], parent_id, text } = message;
 
     // channel.sendMessage expects an array of user id strings
-    const mentions = isUserResponseArray(mentioned_users)
+    const mentions = isUserResponseArray<StreamChatGenerics>(mentioned_users)
       ? mentioned_users.map(({ id }) => id)
       : mentioned_users;
 
@@ -569,95 +1006,149 @@ const ChannelInner = <
       id,
       mentioned_users: mentions,
       parent_id,
-      quoted_message_id: quotedMessage?.id,
+      quoted_message_id:
+        parent_id === quotedMessage?.parent_id ? quotedMessage?.id : undefined,
       text,
       ...customMessageData,
-    } as Message<At, Me, Us>;
+    } as Message<StreamChatGenerics>;
 
     try {
-      let messageResponse: void | SendMessageAPIResponse<At, Ch, Co, Me, Re, Us>;
+      let messageResponse: void | SendMessageAPIResponse<StreamChatGenerics>;
 
       if (doSendMessageRequest) {
-        messageResponse = await doSendMessageRequest(channel.cid, messageData);
+        messageResponse = await doSendMessageRequest(channel, messageData, options);
       } else {
-        messageResponse = await channel.sendMessage(messageData);
+        messageResponse = await channel.sendMessage(messageData, options);
       }
 
-      // replace it after send is completed
-      if (messageResponse?.message) {
+      let existingMessage;
+      for (let i = channel.state.messages.length - 1; i >= 0; i--) {
+        const msg = channel.state.messages[i];
+        if (msg.id && msg.id === messageData.id) {
+          existingMessage = msg;
+          break;
+        }
+      }
+
+      const responseTimestamp = new Date(
+        messageResponse?.message?.updated_at || 0,
+      ).getTime();
+      const existingMessageTimestamp = existingMessage?.updated_at?.getTime() || 0;
+      const responseIsTheNewest = responseTimestamp > existingMessageTimestamp;
+
+      // Replace the message payload after send is completed
+      // We need to check for the newest message payload, because on slow network, the response can arrive later than WS events message.new, message.updated.
+      // Always override existing message in status "sending"
+      if (
+        messageResponse?.message &&
+        (responseIsTheNewest || existingMessage?.status === 'sending')
+      ) {
         updateMessage({
           ...messageResponse.message,
           status: 'received',
         });
       }
 
-      if (quotedMessage) setQuotedMessage(undefined);
+      if (quotedMessage && parent_id === quotedMessage?.parent_id)
+        setQuotedMessage(undefined);
     } catch (error) {
       // error response isn't usable so needs to be stringified then parsed
       const stringError = JSON.stringify(error);
-      const parsedError = stringError ? JSON.parse(stringError) : {};
+      const parsedError = (
+        stringError ? JSON.parse(stringError) : {}
+      ) as ErrorFromResponse<APIErrorResponse>;
 
-      updateMessage({
-        ...message,
-        errorStatusCode: (parsedError.status as number) || undefined,
-        status: 'failed',
-      });
+      // Handle the case where the message already exists
+      // (typically, when retrying to send a message).
+      // If the message already exists, we can assume it was sent successfully,
+      // so we update the message status to "received".
+      // Right now, the only way to check this error is by checking
+      // the combination of the error code and the error description,
+      // since there is no special error code for duplicate messages.
+      if (
+        parsedError.code === 4 &&
+        error instanceof Error &&
+        error.message.includes('already exists')
+      ) {
+        updateMessage({
+          ...message,
+          status: 'received',
+        });
+      } else {
+        updateMessage({
+          ...message,
+          error: parsedError,
+          errorStatusCode: parsedError.status || undefined,
+          status: 'failed',
+        });
+
+        thread?.upsertReplyLocally({
+          // @ts-expect-error message type mismatch
+          message: {
+            ...message,
+            error: parsedError,
+            errorStatusCode: parsedError.status || undefined,
+            status: 'failed',
+          },
+        });
+      }
     }
-  };
-
-  const createMessagePreview = (
-    text: string,
-    attachments: MessageAttachments<At>,
-    parent: StreamMessage<At, Ch, Co, Ev, Me, Re, Us> | undefined,
-    mentioned_users: UserResponse<Us>[],
-  ) => {
-    const clientSideID = `${client.userID}-${uuidv4()}`;
-
-    return ({
-      __html: text,
-      attachments,
-      created_at: new Date(),
-      html: text,
-      id: clientSideID,
-      mentioned_users,
-      reactions: [],
-      status: 'sending',
-      text,
-      type: 'regular',
-      user: client.user,
-      ...(parent?.id ? { parent_id: parent.id } : null),
-    } as unknown) as MessageResponse<At, Ch, Co, Me, Re, Us>;
   };
 
   const sendMessage = async (
     {
       attachments = [],
       mentioned_users = [],
-      parent = undefined,
+      parent,
       text = '',
-    }: MessageToSend<At, Ch, Co, Ev, Me, Re, Us>,
-    customMessageData?: Partial<Message<At, Me, Us>>,
+    }: MessageToSend<StreamChatGenerics>,
+    customMessageData?: Partial<Message<StreamChatGenerics>>,
+    options?: SendMessageOptions,
   ) => {
     channel.state.filterErrorMessages();
 
-    const messagePreview = createMessagePreview(text, attachments, parent, mentioned_users);
+    const messagePreview = {
+      attachments,
+      created_at: new Date(),
+      html: text,
+      id: customMessageData?.id ?? `${client.userID}-${nanoid()}`,
+      mentioned_users,
+      parent_id: parent?.id,
+      reactions: [],
+      status: 'sending',
+      text,
+      type: 'regular',
+      user: client.user,
+    };
+
+    thread?.upsertReplyLocally({
+      // @ts-expect-error message type mismatch
+      message: messagePreview,
+    });
 
     updateMessage(messagePreview);
 
-    await doSendMessage(messagePreview, customMessageData);
+    await doSendMessage(messagePreview, customMessageData, options);
   };
 
-  const retrySendMessage = async (message: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>) => {
+  const retrySendMessage = async (message: StreamMessage<StreamChatGenerics>) => {
     updateMessage({
       ...message,
       errorStatusCode: undefined,
       status: 'sending',
     });
 
+    if (message.attachments) {
+      // remove scraped attachments added during the message composition in MessageInput to prevent sync issues
+      message.attachments = message.attachments.filter(
+        (attachment) => !attachment.og_scrape_url,
+      );
+    }
+
     await doSendMessage(message);
   };
 
-  const removeMessage = (message: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>) => {
+  const removeMessage = (message: StreamMessage<StreamChatGenerics>) => {
     channel.state.removeMessage(message);
 
     dispatch({
@@ -670,55 +1161,71 @@ const ChannelInner = <
   /** THREAD */
 
   const openThread = (
-    message: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>,
-    event: React.BaseSyntheticEvent,
+    message: StreamMessage<StreamChatGenerics>,
+    event?: React.BaseSyntheticEvent,
   ) => {
-    event.preventDefault();
+    event?.preventDefault();
+    setQuotedMessage((current) => {
+      if (current?.parent_id !== message?.parent_id) {
+        return undefined;
+      } else {
+        return current;
+      }
+    });
     dispatch({ channel, message, type: 'openThread' });
   };
 
-  const closeThread = (event: React.BaseSyntheticEvent) => {
-    event.preventDefault();
+  const closeThread = (event?: React.BaseSyntheticEvent) => {
+    event?.preventDefault();
     dispatch({ type: 'closeThread' });
   };
 
-  const loadMoreThreadFinished = debounce(
-    (
-      threadHasMore: boolean,
-      threadMessages: Array<ReturnType<ChannelState<At, Ch, Co, Ev, Me, Re, Us>['formatMessage']>>,
-    ) => {
-      dispatch({
-        threadHasMore,
-        threadMessages,
-        type: 'loadMoreThreadFinished',
-      });
-    },
-    2000,
-    { leading: true, trailing: true },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const loadMoreThreadFinished = useCallback(
+    debounce(
+      (
+        threadHasMore: boolean,
+        threadMessages: Array<
+          ReturnType<ChannelState<StreamChatGenerics>['formatMessage']>
+        >,
+      ) => {
+        dispatch({
+          threadHasMore,
+          threadMessages,
+          type: 'loadMoreThreadFinished',
+        });
+      },
+      2000,
+      { leading: true, trailing: true },
+    ),
+    [],
   );
 
-  const loadMoreThread = async () => {
-    if (state.threadLoadingMore || !state.thread) return;
+  const loadMoreThread = async (limit: number = DEFAULT_THREAD_PAGE_SIZE) => {
+    // FIXME: should prevent loading more, if state.thread.reply_count === channel.state.threads[parentID].length
+    if (state.threadLoadingMore || !state.thread || !state.threadHasMore) return;
 
     dispatch({ type: 'startLoadingThread' });
-    const parentID = state.thread.id;
+    const parentId = state.thread.id;
 
-    if (!parentID) {
+    if (!parentId) {
       return dispatch({ type: 'closeThread' });
     }
 
-    const oldMessages = channel.state.threads[parentID] || [];
-    const oldestMessageID = oldMessages[0]?.id;
-    const limit = 50;
+    const oldMessages = channel.state.threads[parentId] || [];
+    const oldestMessageId = oldMessages[0]?.id;
 
     try {
-      const queryResponse = await channel.getReplies(parentID, {
-        id_lt: oldestMessageID,
+      const queryResponse = await channel.getReplies(parentId, {
+        id_lt: oldestMessageId,
         limit,
       });
 
-      const threadHasMoreMessages = queryResponse.messages.length === limit;
-      const newThreadMessages = channel.state.threads[parentID] || [];
+      const threadHasMoreMessages = hasMoreMessagesProbably(
+        queryResponse.messages.length,
+        limit,
+      );
+      const newThreadMessages = channel.state.threads[parentId] || [];
 
       // next set loadingMore to false so we can start asking for more data
       loadMoreThreadFinished(threadHasMoreMessages, newThreadMessages);
@@ -733,59 +1240,104 @@ const ChannelInner = <
 
   const { typing, ...restState } = state;
 
-  const channelStateContextValue = useCreateChannelStateContext({
+  const channelStateContextValue = useCreateChannelStateContext<StreamChatGenerics>({
     ...restState,
     acceptedFiles,
     channel,
     channelCapabilitiesArray,
     channelConfig,
+    channelUnreadUiState,
+    debounceURLEnrichmentMs: enrichURLForPreviewConfig?.debounceURLEnrichmentMs,
+    dragAndDropWindow,
+    enrichURLForPreview: props.enrichURLForPreview,
+    findURLFn: enrichURLForPreviewConfig?.findURLFn,
+    giphyVersion: props.giphyVersion || 'fixed_height',
+    imageAttachmentSizeHandler:
+      props.imageAttachmentSizeHandler || getImageAttachmentConfiguration,
     maxNumberOfFiles,
     multipleUploads,
     mutes,
     notifications,
+    onLinkPreviewDismissed: enrichURLForPreviewConfig?.onLinkPreviewDismissed,
     quotedMessage,
+    shouldGenerateVideoThumbnail: props.shouldGenerateVideoThumbnail || true,
+    videoAttachmentSizeHandler:
+      props.videoAttachmentSizeHandler || getVideoAttachmentConfiguration,
     watcher_count: state.watcherCount,
   });
 
-  const channelActionContextValue: ChannelActionContextValue<At, Ch, Co, Ev, Me, Re, Us> = useMemo(
-    () => ({
-      addNotification,
-      closeThread,
-      dispatch,
-      editMessage,
-      loadMore,
-      loadMoreThread,
-      onMentionsClick: onMentionsHoverOrClick,
-      onMentionsHover: onMentionsHoverOrClick,
-      openThread,
-      removeMessage,
-      retrySendMessage,
-      sendMessage,
-      setQuotedMessage,
-      skipMessageDataMemoization,
-      updateMessage,
-    }),
-    [channel.cid, loadMore, quotedMessage],
-  );
+  const channelActionContextValue: ChannelActionContextValue<StreamChatGenerics> =
+    useMemo(
+      () => ({
+        addNotification,
+        closeThread,
+        deleteMessage,
+        dispatch,
+        editMessage,
+        jumpToFirstUnreadMessage,
+        jumpToLatestMessage,
+        jumpToMessage,
+        loadMore,
+        loadMoreNewer,
+        loadMoreThread,
+        markRead,
+        onMentionsClick: onMentionsHoverOrClick,
+        onMentionsHover: onMentionsHoverOrClick,
+        openThread,
+        removeMessage,
+        retrySendMessage,
+        sendMessage,
+        setChannelUnreadUiState,
+        setQuotedMessage,
+        skipMessageDataMemoization,
+        updateMessage,
+      }),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [
+        channel.cid,
+        deleteMessage,
+        enrichURLForPreviewConfig?.findURLFn,
+        enrichURLForPreviewConfig?.onLinkPreviewDismissed,
+        loadMore,
+        loadMoreNewer,
+        markRead,
+        quotedMessage,
+        jumpToFirstUnreadMessage,
+        jumpToMessage,
+        jumpToLatestMessage,
+        setChannelUnreadUiState,
+      ],
+    );
 
-  const componentContextValue: ComponentContextValue<At, Ch, Co, Ev, Me, Re, Us> = useMemo(
+  // @ts-expect-error message type mismatch
+  const componentContextValue: Partial<ComponentContextValue> = useMemo(
     () => ({
-      Attachment: props.Attachment || DefaultAttachment,
-      AutocompleteSuggestionHeader: props.AutocompleteSuggestionHeader,
+      Attachment: props.Attachment,
+      AttachmentPreviewList: props.AttachmentPreviewList,
+      AttachmentSelector: props.AttachmentSelector,
+      AttachmentSelectorInitiationButtonContents:
+        props.AttachmentSelectorInitiationButtonContents,
+      AudioRecorder: props.AudioRecorder,
       AutocompleteSuggestionItem: props.AutocompleteSuggestionItem,
       AutocompleteSuggestionList: props.AutocompleteSuggestionList,
       Avatar: props.Avatar,
+      BaseImage: props.BaseImage,
       CooldownTimer: props.CooldownTimer,
+      CustomMessageActionsList: props.CustomMessageActionsList,
       DateSeparator: props.DateSeparator,
       EditMessageInput: props.EditMessageInput,
-      EmojiIcon: props.EmojiIcon,
+      EmojiPicker: props.EmojiPicker,
+      emojiSearchIndex: props.emojiSearchIndex,
       EmptyStateIndicator: props.EmptyStateIndicator,
       FileUploadIcon: props.FileUploadIcon,
       GiphyPreviewMessage: props.GiphyPreviewMessage,
       HeaderComponent: props.HeaderComponent,
       Input: props.Input,
+      LinkPreviewList: props.LinkPreviewList,
       LoadingIndicator: props.LoadingIndicator,
-      Message: props.Message || MessageSimple,
+      Message: props.Message,
+      MessageActions: props.MessageActions,
+      MessageBouncePrompt: props.MessageBouncePrompt,
       MessageDeleted: props.MessageDeleted,
       MessageListNotifications: props.MessageListNotifications,
       MessageNotification: props.MessageNotification,
@@ -794,81 +1346,145 @@ const ChannelInner = <
       MessageStatus: props.MessageStatus,
       MessageSystem: props.MessageSystem,
       MessageTimestamp: props.MessageTimestamp,
+      ModalGallery: props.ModalGallery,
       PinIndicator: props.PinIndicator,
+      PollActions: props.PollActions,
+      PollContent: props.PollContent,
+      PollCreationDialog: props.PollCreationDialog,
+      PollHeader: props.PollHeader,
+      PollOptionSelector: props.PollOptionSelector,
       QuotedMessage: props.QuotedMessage,
       QuotedMessagePreview: props.QuotedMessagePreview,
+      QuotedPoll: props.QuotedPoll,
+      reactionOptions: props.reactionOptions,
       ReactionSelector: props.ReactionSelector,
       ReactionsList: props.ReactionsList,
+      ReactionsListModal: props.ReactionsListModal,
       SendButton: props.SendButton,
+      StartRecordingAudioButton: props.StartRecordingAudioButton,
+      StopAIGenerationButton: props.StopAIGenerationButton,
+      StreamedMessageText: props.StreamedMessageText,
+      ThreadHead: props.ThreadHead,
       ThreadHeader: props.ThreadHeader,
       ThreadStart: props.ThreadStart,
+      Timestamp: props.Timestamp,
       TriggerProvider: props.TriggerProvider,
       TypingIndicator: props.TypingIndicator,
+      UnreadMessagesNotification: props.UnreadMessagesNotification,
+      UnreadMessagesSeparator: props.UnreadMessagesSeparator,
       VirtualMessage: props.VirtualMessage,
     }),
-    [],
-  );
-
-  const emojiContextValue: EmojiContextValue = useMemo(
-    () => ({
-      Emoji: props.Emoji,
-      emojiConfig,
-      EmojiIndex: props.EmojiIndex,
-      EmojiPicker: props.EmojiPicker,
-    }),
-    [],
+    [
+      props.Attachment,
+      props.AttachmentPreviewList,
+      props.AttachmentSelector,
+      props.AttachmentSelectorInitiationButtonContents,
+      props.AudioRecorder,
+      props.AutocompleteSuggestionItem,
+      props.AutocompleteSuggestionList,
+      props.Avatar,
+      props.BaseImage,
+      props.CooldownTimer,
+      props.CustomMessageActionsList,
+      props.DateSeparator,
+      props.EditMessageInput,
+      props.EmojiPicker,
+      props.EmptyStateIndicator,
+      props.FileUploadIcon,
+      props.GiphyPreviewMessage,
+      props.HeaderComponent,
+      props.Input,
+      props.LinkPreviewList,
+      props.LoadingIndicator,
+      props.Message,
+      props.MessageActions,
+      props.MessageBouncePrompt,
+      props.MessageDeleted,
+      props.MessageListNotifications,
+      props.MessageNotification,
+      props.MessageOptions,
+      props.MessageRepliesCountButton,
+      props.MessageStatus,
+      props.MessageSystem,
+      props.MessageTimestamp,
+      props.ModalGallery,
+      props.PinIndicator,
+      props.PollActions,
+      props.PollContent,
+      props.PollCreationDialog,
+      props.PollHeader,
+      props.PollOptionSelector,
+      props.QuotedMessage,
+      props.QuotedMessagePreview,
+      props.QuotedPoll,
+      props.ReactionSelector,
+      props.ReactionsList,
+      props.ReactionsListModal,
+      props.SendButton,
+      props.StartRecordingAudioButton,
+      props.ThreadHead,
+      props.ThreadHeader,
+      props.ThreadStart,
+      props.Timestamp,
+      props.TriggerProvider,
+      props.TypingIndicator,
+      props.UnreadMessagesNotification,
+      props.UnreadMessagesSeparator,
+      props.VirtualMessage,
+      props.StopAIGenerationButton,
+      props.StreamedMessageText,
+      props.emojiSearchIndex,
+      props.reactionOptions,
+    ],
   );
 
   const typingContextValue = useCreateTypingContext({
     typing,
   });
 
-  const chatClass = customClasses?.chat || 'str-chat';
-  const chatContainerClass = customClasses?.chatContainer || 'str-chat__container';
-  const channelClass = customClasses?.channel || 'str-chat-channel';
-  const windowsEmojiClass =
-    useImageFlagEmojisOnWindows && navigator.userAgent.match(/Win/)
-      ? 'str-chat--windows-flags'
-      : '';
-
   if (state.error) {
     return (
-      <div className={`${chatClass} ${channelClass} ${theme}`}>
+      <ChannelContainer>
         <LoadingErrorIndicator error={state.error} />
-      </div>
+      </ChannelContainer>
     );
   }
 
   if (state.loading) {
     return (
-      <div className={`${chatClass} ${channelClass} ${theme}`}>
-        <LoadingIndicator size={25} />
-      </div>
+      <ChannelContainer>
+        <LoadingIndicator />
+      </ChannelContainer>
     );
   }
 
   if (!channel.watch) {
     return (
-      <div className={`${chatClass} ${channelClass} ${theme}`}>
-        <div>{t('Channel Missing')}</div>
-      </div>
+      <ChannelContainer>
+        <div>{t<string>('Channel Missing')}</div>
+      </ChannelContainer>
     );
   }
 
   return (
-    <div className={`${chatClass} ${channelClass} ${theme} ${windowsEmojiClass}`}>
+    <ChannelContainer className={windowsEmojiClass}>
       <ChannelStateProvider value={channelStateContextValue}>
         <ChannelActionProvider value={channelActionContextValue}>
-          <ComponentProvider value={componentContextValue}>
-            <EmojiProvider value={emojiContextValue}>
-              <TypingProvider value={typingContextValue}>
-                <div className={`${chatContainerClass}`}>{children}</div>
-              </TypingProvider>
-            </EmojiProvider>
-          </ComponentProvider>
+          <WithComponents overrides={componentContextValue}>
+            <TypingProvider value={typingContextValue}>
+              <div className={`${chatContainerClass}`}>
+                {dragAndDropWindow && (
+                  <DropzoneProvider {...optionalMessageInputProps}>
+                    {children}
+                  </DropzoneProvider>
+                )}
+                {!dragAndDropWindow && <>{children}</>}
+              </div>
+            </TypingProvider>
+          </WithComponents>
         </ChannelActionProvider>
       </ChannelStateProvider>
-    </div>
+    </ChannelContainer>
   );
 };
 
@@ -878,7 +1494,6 @@ const ChannelInner = <
  * - [ChannelStateContext](https://getstream.io/chat/docs/sdk/react/contexts/channel_state_context/)
  * - [ChannelActionContext](https://getstream.io/chat/docs/sdk/react/contexts/channel_action_context/)
  * - [ComponentContext](https://getstream.io/chat/docs/sdk/react/contexts/component_context/)
- * - [EmojiContext](https://getstream.io/chat/docs/sdk/react/contexts/emoji_context/)
  * - [TypingContext](https://getstream.io/chat/docs/sdk/react/contexts/typing_context/)
  */
 export const Channel = React.memo(UnMemoizedChannel) as typeof UnMemoizedChannel;

@@ -1,28 +1,21 @@
-import { v4 as uuidv4 } from 'uuid';
+import { nanoid } from 'nanoid';
 
 export const generateChannel = (options = { channel: {} }) => {
   const { channel: optionsChannel, config, ...optionsBesidesChannel } = options;
-  const id = (optionsChannel && optionsChannel.id) || uuidv4();
-  const type = (optionsChannel && optionsChannel.type) || 'messaging';
+  const id = optionsChannel?.id ?? nanoid();
+  const type = optionsChannel?.type ?? 'messaging';
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { id: _, type: __, ...restOptionsChannel } = optionsChannel ?? {};
+
   return {
     members: [],
     messages: [],
     pinnedMessages: [],
     ...optionsBesidesChannel,
-    // eslint-disable-next-line sort-keys
+
     channel: {
       cid: `${type}:${id}`,
-      created_at: '2020-04-28T11:20:48.578147Z',
-      created_by: {
-        banned: false,
-        created_at: '2020-04-27T13:05:13.847572Z',
-        id: 'vishal',
-        last_active: '2020-04-28T11:21:08.353026Z',
-        online: false,
-        role: 'user',
-        updated_at: '2020-04-28T11:21:08.357468Z',
-      },
-      // eslint-disable-next-line sort-keys
+
       config: {
         automod: 'disabled',
         automod_behavior: 'flag',
@@ -40,6 +33,7 @@ export const generateChannel = (options = { channel: {} }) => {
         message_retention: 'infinite',
         mutes: true,
         name: 'messaging',
+        polls: true,
         reactions: true,
         read_events: true,
         replies: true,
@@ -50,11 +44,23 @@ export const generateChannel = (options = { channel: {} }) => {
         url_enrichment: true,
         ...config,
       },
+
+      created_at: '2020-04-28T11:20:48.578147Z',
+
+      created_by: {
+        banned: false,
+        created_at: '2020-04-27T13:05:13.847572Z',
+        id: 'vishal',
+        last_active: '2020-04-28T11:21:08.353026Z',
+        online: false,
+        role: 'user',
+        updated_at: '2020-04-28T11:21:08.357468Z',
+      },
       frozen: false,
       id,
       type,
       updated_at: '2020-04-28T11:20:48.578147Z',
-      ...optionsChannel,
+      ...restOptionsChannel,
     },
   };
 };

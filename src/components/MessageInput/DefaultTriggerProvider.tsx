@@ -9,22 +9,17 @@ import {
   useMessageInputContext,
 } from '../../context/MessageInputContext';
 
-import type { EmojiData } from 'emoji-mart';
-
-import type { SuggestionCommand, SuggestionUser } from '../ChatAutoComplete/ChatAutoComplete';
+import type {
+  SuggestionCommand,
+  SuggestionUser,
+} from '../ChatAutoComplete/ChatAutoComplete';
 import type { CommandItemProps } from '../CommandItem/CommandItem';
 import type { EmoticonItemProps } from '../EmoticonItem/EmoticonItem';
 import type { UserItemProps } from '../UserItem/UserItem';
 
 import type {
   CustomTrigger,
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
+  DefaultStreamChatGenerics,
   UnknownType,
 } from '../../types/types';
 
@@ -34,15 +29,14 @@ export type AutocompleteMinimalData = {
 } & ({ id: string } | { name: string });
 
 export type CommandTriggerSetting<
-  Co extends DefaultCommandType = DefaultCommandType
-> = TriggerSetting<CommandItemProps, SuggestionCommand<Co>>;
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = TriggerSetting<CommandItemProps, SuggestionCommand<StreamChatGenerics>>;
 
-export type EmojiTriggerSetting = TriggerSetting<EmoticonItemProps, EmojiData>;
+export type EmojiTriggerSetting = TriggerSetting<EmoticonItemProps>;
 
-export type UserTriggerSetting<Us extends DefaultUserType<Us> = DefaultUserType> = TriggerSetting<
-  UserItemProps,
-  SuggestionUser<Us>
->;
+export type UserTriggerSetting<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = TriggerSetting<UserItemProps, SuggestionUser<StreamChatGenerics>>;
 
 export type TriggerSetting<T extends UnknownType = UnknownType, U = UnknownType> = {
   component: string | React.ComponentType<T>;
@@ -50,10 +44,8 @@ export type TriggerSetting<T extends UnknownType = UnknownType, U = UnknownType>
     query: string,
     text: string,
     onReady: (data: (U & AutocompleteMinimalData)[], token: string) => void,
-  ) => U[] | Promise<void> | void;
-  output: (
-    entity: U,
-  ) =>
+  ) => U[] | PromiseLike<void> | void;
+  output: (entity: U) =>
     | {
         caretPosition: 'start' | 'end' | 'next' | number;
         text: string;
@@ -65,39 +57,32 @@ export type TriggerSetting<T extends UnknownType = UnknownType, U = UnknownType>
 };
 
 export type TriggerSettings<
-  Co extends DefaultCommandType = DefaultCommandType,
-  Us extends DefaultUserType<Us> = DefaultUserType,
-  V extends CustomTrigger = CustomTrigger
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
 > =
   | {
       [key in keyof V]: TriggerSetting<V[key]['componentProps'], V[key]['data']>;
     }
   | {
-      '/': CommandTriggerSetting<Co>;
+      '/': CommandTriggerSetting<StreamChatGenerics>;
       ':': EmojiTriggerSetting;
-      '@': UserTriggerSetting<Us>;
+      '@': UserTriggerSetting<StreamChatGenerics>;
     };
 
 export const DefaultTriggerProvider = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType,
-  V extends CustomTrigger = CustomTrigger
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
 >({
   children,
 }: PropsWithChildren<Record<string, unknown>>) => {
-  const currentValue = useMessageInputContext<At, Ch, Co, Ev, Me, Re, Us, V>(
+  const currentValue = useMessageInputContext<StreamChatGenerics, V>(
     'DefaultTriggerProvider',
   );
 
-  const defaultAutocompleteTriggers: TriggerSettings<Co, Us> = {
-    '/': useCommandTrigger<At, Ch, Co>(),
-    ':': useEmojiTrigger(currentValue.emojiIndex),
-    '@': useUserTrigger<At, Ch, Co, Ev, Me, Re, Us>({
+  const defaultAutocompleteTriggers: TriggerSettings<StreamChatGenerics> = {
+    '/': useCommandTrigger<StreamChatGenerics>(),
+    ':': useEmojiTrigger(currentValue.emojiSearchIndex),
+    '@': useUserTrigger<StreamChatGenerics>({
       disableMentions: currentValue.disableMentions,
       mentionAllAppUsers: currentValue.mentionAllAppUsers,
       mentionQueryParams: currentValue.mentionQueryParams,
@@ -111,5 +96,7 @@ export const DefaultTriggerProvider = <
     autocompleteTriggers: defaultAutocompleteTriggers,
   };
 
-  return <MessageInputContextProvider value={newValue}>{children}</MessageInputContextProvider>;
+  return (
+    <MessageInputContextProvider value={newValue}>{children}</MessageInputContextProvider>
+  );
 };

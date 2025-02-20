@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 module.exports = {
   globals: {
     ICAL: {},
@@ -11,7 +12,9 @@ module.exports = {
   },
   preset: 'ts-jest',
   setupFiles: ['core-js'],
-  testPathIgnorePatterns: ['/node_modules/', '/examples/', '__snapshots__'],
+  setupFilesAfterEnv: ['<rootDir>/jest.env.setup.js'],
+  testEnvironment: 'jsdom',
+  testPathIgnorePatterns: ['/node_modules/', '/examples/', '__snapshots__', '/e2e/'],
   testRegex: [
     /**
      * If you want to test single file, mention it here
@@ -21,8 +24,8 @@ module.exports = {
      */
   ],
   transform: {
-    '^.+\\.(js|jsx)?$': 'babel-jest',
     '\\.(ts|tsx)?$': ['ts-jest'],
+    '^.+\\.(js|jsx)?$': 'babel-jest',
   },
   transformIgnorePatterns: [],
   verbose: true,

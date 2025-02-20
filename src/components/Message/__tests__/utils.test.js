@@ -1,11 +1,19 @@
 import { generateMessage, generateReaction, generateUser } from 'mock-builders';
 import {
+  countReactions,
+  getTestClientWithUser,
+  groupReactions,
+  mockTranslatorFunction,
+} from '../../../mock-builders';
+import {
   areMessagePropsEqual,
   areMessageUIPropsEqual,
   getImages,
   getMessageActions,
   getNonImageAttachments,
+  getReadByTooltipText,
   isUserMuted,
+  mapToUserNameOrId,
   MESSAGE_ACTIONS,
   messageHasAttachments,
   messageHasReactions,
@@ -74,6 +82,7 @@ describe('Message utils', () => {
       canDelete: true,
       canEdit: true,
       canFlag: true,
+      canMarkUnread: true,
       canMute: true,
       canPin: true,
       canQuote: true,
@@ -85,11 +94,13 @@ describe('Message utils', () => {
     it.each([
       ['empty', []],
       ['false', false],
-    ])('should return no message actions if message actions are %s', (_, actionsValue) => {
-      const messageActions = actionsValue;
-      const result = getMessageActions(messageActions, defaultCapabilities);
-      expect(result).toStrictEqual([]);
-    });
+    ])(
+      'should return no message actions if message actions are %s',
+      (_, messageActions) => {
+        const result = getMessageActions(messageActions, defaultCapabilities);
+        expect(result).toStrictEqual([]);
+      },
+    );
 
     it('should return all message actions if actions are set to true', () => {
       const result = getMessageActions(true, defaultCapabilities);
@@ -103,6 +114,8 @@ describe('Message utils', () => {
       ['not allow', 'delete', 'canDelete', false],
       ['allow', 'flag', 'canFlag', true],
       ['not allow', 'flag', 'canFlag', false],
+      ['allow', 'markUnread', 'canMarkUnread', true],
+      ['not allow', 'markUnread', 'canMarkUnread', false],
       ['allow', 'mute', 'canMute', true],
       ['not allow', 'mute', 'canMute', false],
       ['allow', 'pin', 'canPin', true],
@@ -138,6 +151,64 @@ describe('Message utils', () => {
       const nextProps = { message: message2 };
       const shouldUpdate = !areMessagePropsEqual(nextProps, currentProps);
       expect(shouldUpdate).toBe(true);
+    });
+
+    it('should update if rendered with a different quoted message', () => {
+      const cases = [
+        ['deleted_at', undefined, new Date().toISOString()],
+        ['latest_reactions', [], [1]],
+        ['own_reactions', [], [1]],
+        ['pinned', false, true],
+        ['reply_count', 0, 1],
+        ['status', 'sending', 'received'],
+        ['text', '', 'a'],
+        ['type', 'X', 'Y'],
+        ['updated_at', new Date(1).toISOString(), new Date(2).toISOString()],
+        [
+          'user',
+          { updated_at: new Date(1).toISOString() },
+          { updated_at: new Date(2).toISOString() },
+        ],
+      ];
+      const message = generateMessage();
+      const quotedMessage = generateMessage();
+      cases.forEach(([key, prevVal, nextVal]) => {
+        const shouldUpdate = !areMessagePropsEqual(
+          {
+            message: {
+              ...message,
+              quoted_message: { ...quotedMessage, [key]: prevVal },
+              quoted_message_id: quotedMessage.id,
+            },
+          },
+          {
+            message: {
+              ...message,
+              quoted_message: { ...quotedMessage, [key]: nextVal },
+              quoted_message_id: quotedMessage.id,
+            },
+          },
+        );
+        expect(shouldUpdate).toBe(true);
+      });
+      expect(
+        !areMessagePropsEqual(
+          {
+            message: {
+              ...message,
+              quoted_message: undefined,
+              quoted_message_id: undefined,
+            },
+          },
+          {
+            message: {
+              ...message,
+              quoted_message: quotedMessage,
+              quoted_message_id: quotedMessage.id,
+            },
+          },
+        ),
+      ).toBe(true);
     });
 
     it('should update if rendered with a different message is read by other users', () => {
@@ -199,6 +270,28 @@ describe('Message utils', () => {
       expect(arePropsEqual).toBe(false);
       expect(shouldUpdate).toBe(true);
     });
+
+    it('should update when messageActions change', () => {
+      const message = generateMessage();
+      const prevMessageActions = ['edit', 'delete'];
+      const nextMessageActions = ['edit', 'delete', 'reply'];
+      const shouldUpdate = !areMessagePropsEqual(
+        { message, messageActions: prevMessageActions },
+        { message, messageActions: nextMessageActions },
+      );
+      expect(shouldUpdate).toBe(true);
+    });
+
+    it('should not update when messageActions stay same', () => {
+      const message = generateMessage();
+      const prevMessageActions = ['edit', 'delete'];
+      const nextMessageActions = ['edit', 'delete'];
+      const shouldUpdate = !areMessagePropsEqual(
+        { message, messageActions: prevMessageActions },
+        { message, messageActions: nextMessageActions },
+      );
+      expect(shouldUpdate).toBe(false);
+    });
   });
 
   describe('messageHasReactions', () => {
@@ -212,8 +305,11 @@ describe('Message utils', () => {
       expect(messageHasReactions(message)).toBe(false);
     });
     it('should return true if message has reactions', () => {
+      const reactions = [generateReaction()];
       const message = generateMessage({
-        latest_reactions: [generateReaction()],
+        latest_reactions: reactions,
+        reaction_counts: countReactions(reactions),
+        reaction_groups: groupReactions(reactions),
       });
       expect(messageHasReactions(message)).toBe(true);
     });
@@ -278,7 +374,7 @@ describe('Message utils', () => {
 
     it('should return empty if message has only image attachments', () => {
       const img = {
-        asset_url: 'image.jpg',
+        asset_url: 'http://image.jpg',
         type: 'image',
       };
       const message = generateMessage({
@@ -300,6 +396,92 @@ describe('Message utils', () => {
         attachments: [pdf, img],
       });
       expect(getNonImageAttachments(message)).toStrictEqual([pdf]);
+    });
+  });
+
+  describe('getReadByTooltipText', () => {
+    const tooltipUserNameMapper = mapToUserNameOrId;
+
+    let client;
+
+    beforeAll(async () => {
+      client = await getTestClientWithUser(alice);
+    });
+    it('ignores the client user', () => {
+      const result = getReadByTooltipText(
+        [client.user],
+        mockTranslatorFunction,
+        client,
+        tooltipUserNameMapper,
+      );
+      expect(result).toStrictEqual('');
+    });
+    it('returns a single user if only one user in array', () => {
+      const result = getReadByTooltipText(
+        [bob],
+        mockTranslatorFunction,
+        client,
+        tooltipUserNameMapper,
+      );
+      expect(result).toStrictEqual(`${bob.name} `);
+    });
+    it('returns "1 and 2" if read by two users', () => {
+      const users = [generateUser({ name: '1' }), generateUser({ name: '2' })];
+      const result = getReadByTooltipText(
+        users,
+        mockTranslatorFunction,
+        client,
+        tooltipUserNameMapper,
+      );
+      expect(result).toStrictEqual(`1 and 2`);
+    });
+    it('returns "1, 2, and 3" if read by three users', () => {
+      const users = [
+        generateUser({ name: '1' }),
+        generateUser({ name: '2' }),
+        generateUser({ name: '3' }),
+      ];
+      const result = getReadByTooltipText(
+        users,
+        mockTranslatorFunction,
+        client,
+        tooltipUserNameMapper,
+      );
+      expect(result).toStrictEqual(`1, 2, and 3`);
+    });
+    it('returns "1, 2, 3, 4, 5 and 5 more if read by ten users', () => {
+      const users = [...Array(10).keys()].map((n) =>
+        generateUser({ name: (n + 1).toString() }),
+      );
+      const result = getReadByTooltipText(
+        users,
+        mockTranslatorFunction,
+        client,
+        tooltipUserNameMapper,
+      );
+      expect(result).toStrictEqual(`1, 2, 3, 4, 5 and 5 more`);
+    });
+    it('overrides user format with tooltipUserNameMapper', () => {
+      const users = [generateUser({ name: '1' }), generateUser({ name: '2' })];
+      const result = getReadByTooltipText(
+        users,
+        mockTranslatorFunction,
+        client,
+        (user) => `Dr. ${user.name}`,
+      );
+      expect(result).toStrictEqual(`Dr. 1 and Dr. 2`);
+    });
+    it('throws error if no translator function provided', () => {
+      expect(() => getReadByTooltipText([], null, client, tooltipUserNameMapper)).toThrow(
+        'getReadByTooltipText was called, but translation function is not available',
+      );
+    });
+    it('throws error if no tooltipUserNameMapper function provided', () => {
+      expect(() =>
+        getReadByTooltipText([], mockTranslatorFunction, client, undefined),
+      ).toThrow(
+        'getReadByTooltipText was called, but tooltipUserNameMapper function is not available',
+      );
     });
   });
 });

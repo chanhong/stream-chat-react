@@ -1,20 +1,43 @@
 import React from 'react';
 
 import { useTranslationContext } from '../../context/TranslationContext';
+import { ChatBubble } from './icons';
 
 export type EmptyStateIndicatorProps = {
   /** List Type: channel | message */
-  listType: 'channel' | 'message';
+  listType?: 'channel' | 'message' | 'thread';
 };
 
-const UnMemoizedEmptyStateIndicator: React.FC<EmptyStateIndicatorProps> = (props) => {
+const UnMemoizedEmptyStateIndicator = (props: EmptyStateIndicatorProps) => {
   const { listType } = props;
 
   const { t } = useTranslationContext('EmptyStateIndicator');
 
-  if (listType === 'channel') return <p>{t('You have no channels currently')}</p>;
+  if (listType === 'thread') return null;
 
-  if (listType === 'message') return null;
+  if (listType === 'channel') {
+    const text = t<string>('You have no channels currently');
+    return (
+      <>
+        <div className='str-chat__channel-list-empty'>
+          <ChatBubble />
+          <p role='listitem'>{text}</p>
+        </div>
+      </>
+    );
+  }
+
+  if (listType === 'message') {
+    const text = t<string>('No chats here yet…');
+    return (
+      <div className='str-chat__empty-channel'>
+        <ChatBubble />
+        <p className='str-chat__empty-channel-text' role='listitem'>
+          {text}
+        </p>
+      </div>
+    );
+  }
 
   return <p>No items exist</p>;
 };

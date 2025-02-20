@@ -1,110 +1,109 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 
-import { Avatar } from '../Avatar';
+import { CloseIcon } from './icons';
+import { Attachment as DefaultAttachment } from '../Attachment';
+import { Avatar as DefaultAvatar } from '../Avatar';
+import { Poll } from '../Poll';
 
+import { useChatContext } from '../../context/ChatContext';
 import { useChannelActionContext } from '../../context/ChannelActionContext';
 import { useComponentContext } from '../../context/ComponentContext';
 import { useTranslationContext } from '../../context/TranslationContext';
 
 import type { TranslationLanguages } from 'stream-chat';
-
 import type { StreamMessage } from '../../context/ChannelStateContext';
+import type { MessageContextValue } from '../../context';
+import type { DefaultStreamChatGenerics } from '../../types/types';
+import { renderText as defaultRenderText } from '../Message';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
-
-const QuotedMessagePreviewHeader = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+export const QuotedMessagePreviewHeader = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >() => {
-  const { setQuotedMessage } = useChannelActionContext<At, Ch, Co, Ev, Me, Re, Us>(
-    'QuotedMessagePreview',
-  );
+  const { setQuotedMessage } =
+    useChannelActionContext<StreamChatGenerics>('QuotedMessagePreview');
   const { t } = useTranslationContext('QuotedMessagePreview');
 
   return (
-    <div className='quoted-message-preview-header'>
-      <div>{t('Reply to Message')}</div>
-      <button className='str-chat__square-button' onClick={() => setQuotedMessage(undefined)}>
-        <svg height='10' width='10' xmlns='http://www.w3.org/2000/svg'>
-          <path
-            d='M9.916 1.027L8.973.084 5 4.058 1.027.084l-.943.943L4.058 5 .084 8.973l.943.943L5 5.942l3.973 3.974.943-.943L5.942 5z'
-            fillRule='evenodd'
-          />
-        </svg>
+    <div className='str-chat__quoted-message-preview-header'>
+      <div className='str-chat__quoted-message-reply-to-message'>
+        {t<string>('Reply to Message')}
+      </div>
+      <button
+        aria-label={t('aria/Cancel Reply')}
+        className='str-chat__quoted-message-remove'
+        onClick={() => setQuotedMessage(undefined)}
+      >
+        <CloseIcon />
       </button>
     </div>
   );
 };
 
 export type QuotedMessagePreviewProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 > = {
-  quotedMessage: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>;
+  quotedMessage: StreamMessage<StreamChatGenerics>;
+  renderText?: MessageContextValue<StreamChatGenerics>['renderText'];
 };
 
 export const QuotedMessagePreview = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
->(
-  props: QuotedMessagePreviewProps<At, Ch, Co, Ev, Me, Re, Us>,
-) => {
-  const { quotedMessage } = props;
-
-  const { Attachment } = useComponentContext<At, Ch, Co, Ev, Me, Re, Us>('QuotedMessagePreview');
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>({
+  quotedMessage,
+  renderText = defaultRenderText,
+}: QuotedMessagePreviewProps<StreamChatGenerics>) => {
+  const { client } = useChatContext();
+  const { Attachment = DefaultAttachment, Avatar = DefaultAvatar } =
+    useComponentContext<StreamChatGenerics>('QuotedMessagePreview');
   const { userLanguage } = useTranslationContext('QuotedMessagePreview');
 
   const quotedMessageText =
     quotedMessage.i18n?.[`${userLanguage}_text` as `${TranslationLanguages}_text`] ||
     quotedMessage.text;
 
-  // @ts-expect-error
-  const quotedMessageAttachment = quotedMessage.attachments.length
-    ? // @ts-expect-error
-      quotedMessage.attachments[0]
-    : null;
+  const renderedText = useMemo(
+    () => renderText(quotedMessageText, quotedMessage.mentioned_users),
+    [quotedMessage.mentioned_users, quotedMessageText, renderText],
+  );
+
+  const quotedMessageAttachment = useMemo(() => {
+    const [attachment] = quotedMessage.attachments ?? [];
+    return attachment ? [attachment] : [];
+  }, [quotedMessage.attachments]);
 
   if (!quotedMessageText && !quotedMessageAttachment) return null;
 
+  const poll = quotedMessage.poll_id && client.polls.fromState(quotedMessage.poll_id);
+
   return (
-    <div className='quoted-message-preview'>
-      <QuotedMessagePreviewHeader />
-      <div className='quoted-message-preview-content'>
-        {quotedMessage.user && (
-          <Avatar
-            image={quotedMessage.user.image}
-            name={quotedMessage.user.name || quotedMessage.user.id}
-            size={20}
-            user={quotedMessage.user}
-          />
+    <div
+      className='str-chat__quoted-message-preview'
+      data-testid='quoted-message-preview'
+    >
+      {quotedMessage.user && (
+        <Avatar
+          className='str-chat__avatar--quoted-message-sender'
+          image={quotedMessage.user.image}
+          name={quotedMessage.user.name || quotedMessage.user.id}
+          user={quotedMessage.user}
+        />
+      )}
+      <div className='str-chat__quoted-message-bubble'>
+        {poll ? (
+          <Poll isQuoted poll={poll} />
+        ) : (
+          <>
+            {!!quotedMessageAttachment.length && (
+              <Attachment attachments={quotedMessageAttachment} isQuoted />
+            )}
+            <div
+              className='str-chat__quoted-message-text'
+              data-testid='quoted-message-text'
+            >
+              {renderedText}
+            </div>
+          </>
         )}
-        <div className='quoted-message-preview-content-inner'>
-          {quotedMessageAttachment && <Attachment attachments={[quotedMessageAttachment]} />}
-          <div>{quotedMessageText}</div>
-        </div>
       </div>
     </div>
   );

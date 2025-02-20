@@ -58,7 +58,13 @@ async function renderComponent({
 
   return renderer(
     <ChatProvider value={{ client, ...clientOpts }}>
-      <ChannelStateProvider value={{ channel, ...channelStateOpts }}>
+      <ChannelStateProvider
+        value={{
+          channel,
+          channelCapabilities: { 'send-reaction': true },
+          ...channelStateOpts,
+        }}
+      >
         <ChannelActionProvider
           value={{
             openThread: jest.fn(),
@@ -69,8 +75,9 @@ async function renderComponent({
         >
           <ComponentProvider
             value={{
-              // eslint-disable-next-line react/display-name
-              Message: () => <CustomMessageUIComponent contextCallback={contextCallback} />,
+              Message: () => (
+                <CustomMessageUIComponent contextCallback={contextCallback} />
+              ),
               ...components,
             }}
           >
@@ -174,6 +181,23 @@ describe('<Message /> component', () => {
     expect(sendReaction).toHaveBeenCalledWith(message.id, { type: reaction.type });
   });
 
+  it('should not send reaction without permission', async () => {
+    const reaction = generateReaction({ user: bob });
+    const message = generateMessage({ own_reactions: [] });
+    let context;
+
+    await renderComponent({
+      channelStateOpts: { channelCapabilities: { 'send-reaction': false } },
+      contextCallback: (ctx) => {
+        context = ctx;
+      },
+      message,
+    });
+
+    await context.handleReaction(reaction.type);
+    expect(sendReaction).not.toHaveBeenCalled();
+  });
+
   it('should rollback reaction if channel update fails', async () => {
     const reaction = generateReaction({ user: bob });
     const message = generateMessage({ own_reactions: [] });
@@ -213,7 +237,9 @@ describe('<Message /> component', () => {
 
     await context.handleAction(action.name, action.value, mouseEventMock);
 
-    expect(sendAction).toHaveBeenCalledWith(currentMessage.id, { [action.name]: action.value });
+    expect(sendAction).toHaveBeenCalledWith(currentMessage.id, {
+      [action.name]: action.value,
+    });
     expect(updateMessage).toHaveBeenCalledWith(updatedMessage);
   });
 
@@ -235,7 +261,9 @@ describe('<Message /> component', () => {
 
     await context.handleAction(action.name, action.value, mouseEventMock);
 
-    expect(sendAction).toHaveBeenCalledWith(currentMessage.id, { [action.name]: action.value });
+    expect(sendAction).toHaveBeenCalledWith(currentMessage.id, {
+      [action.name]: action.value,
+    });
     expect(removeMessage).toHaveBeenCalledWith(currentMessage);
   });
 
@@ -606,7 +634,9 @@ describe('<Message /> component', () => {
     let context;
 
     await renderComponent({
-      channelStateOpts: { state: { members: {}, membership: { role: 'owner' }, watchers: {} } },
+      channelStateOpts: {
+        state: { members: {}, membership: { role: 'owner' }, watchers: {} },
+      },
       contextCallback: (ctx) => {
         context = ctx;
       },
@@ -677,6 +707,7 @@ describe('<Message /> component', () => {
     let context;
 
     await renderComponent({
+      channelStateOpts: { channelCapabilities: { 'flag-message': true } },
       contextCallback: (ctx) => {
         context = ctx;
       },
@@ -691,7 +722,7 @@ describe('<Message /> component', () => {
     let context;
 
     await renderComponent({
-      channelStateOpts: { channelConfig: { mutes: true } },
+      channelStateOpts: { channelCapabilities: { 'mute-channel': true } },
       contextCallback: (ctx) => {
         context = ctx;
       },
@@ -802,7 +833,10 @@ describe('<Message /> component', () => {
     await context.handleFlag(mouseEventMock);
 
     expect(flagMessage).toHaveBeenCalledWith(message.id);
-    expect(addNotification).toHaveBeenCalledWith(defaultFlagMessageFailedNotification, 'error');
+    expect(addNotification).toHaveBeenCalledWith(
+      defaultFlagMessageFailedNotification,
+      'error',
+    );
   });
 
   it('should allow user to pin messages when permissions allow', async () => {

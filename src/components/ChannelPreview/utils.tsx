@@ -1,53 +1,92 @@
-import React from 'react';
+import React, { ReactNode } from 'react';
 
-import ReactMarkdown from 'react-markdown/with-html';
+import ReactMarkdown from 'react-markdown';
 
-import type { Channel, TranslationLanguages, UserResponse } from 'stream-chat';
+import type { Channel, PollVote, TranslationLanguages, UserResponse } from 'stream-chat';
 
 import type { TranslationContextValue } from '../../context/TranslationContext';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+import type { DefaultStreamChatGenerics } from '../../types/types';
+import { ChatContextValue } from '../../context';
 
-export const renderPreviewText = (text: string) => <ReactMarkdown source={text} />;
+export const renderPreviewText = (text: string) => (
+  <ReactMarkdown skipHtml>{text}</ReactMarkdown>
+);
+
+const getLatestPollVote = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>(
+  latestVotesByOption: Record<string, PollVote<StreamChatGenerics>[]>,
+) => {
+  let latestVote: PollVote<StreamChatGenerics> | undefined;
+  for (const optionVotes of Object.values(latestVotesByOption)) {
+    optionVotes.forEach((vote) => {
+      if (latestVote && new Date(latestVote.updated_at) >= new Date(vote.created_at))
+        return;
+      latestVote = vote;
+    });
+  }
+
+  return latestVote;
+};
 
 export const getLatestMessagePreview = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  channel: Channel<At, Ch, Co, Ev, Me, Re, Us>,
+  channel: Channel<StreamChatGenerics>,
   t: TranslationContextValue['t'],
   userLanguage: TranslationContextValue['userLanguage'] = 'en',
-): string | JSX.Element => {
-  const latestMessage = channel.state.messages[channel.state.messages.length - 1];
+  isMessageAIGenerated?: ChatContextValue<StreamChatGenerics>['isMessageAIGenerated'],
+): ReactNode => {
+  const latestMessage =
+    channel.state.latestMessages[channel.state.latestMessages.length - 1];
 
   const previewTextToRender =
     latestMessage?.i18n?.[`${userLanguage}_text` as `${TranslationLanguages}_text`] ||
     latestMessage?.text;
+  const poll = latestMessage?.poll;
 
   if (!latestMessage) {
-    return t('Nothing yet...');
+    return t<string>('Nothing yet...');
   }
 
   if (latestMessage.deleted_at) {
-    return t('Message deleted');
+    return t<string>('Message deleted');
+  }
+
+  if (poll) {
+    if (!poll.vote_count) {
+      const createdBy =
+        poll.created_by?.id === channel.getClient().userID
+          ? t<string>('You')
+          : (poll.created_by?.name ?? t<string>('Poll'));
+      return t<string>('📊 {{createdBy}} created: {{ pollName}}', {
+        createdBy,
+        pollName: poll.name,
+      });
+    } else {
+      const latestVote = getLatestPollVote<StreamChatGenerics>(
+        poll.latest_votes_by_option as Record<string, PollVote<StreamChatGenerics>[]>,
+      );
+      const option =
+        latestVote && poll.options.find((opt) => opt.id === latestVote.option_id);
+
+      if (option && latestVote) {
+        return t<string>('📊 {{votedBy}} voted: {{pollOptionText}}', {
+          pollOptionText: option.text,
+          votedBy:
+            latestVote?.user?.id === channel.getClient().userID
+              ? t<string>('You')
+              : (latestVote.user?.name ?? t<string>('Poll')),
+        });
+      }
+    }
   }
 
   if (previewTextToRender) {
-    const renderedText = renderPreviewText(previewTextToRender);
-    return renderedText;
+    return isMessageAIGenerated?.(latestMessage)
+      ? previewTextToRender
+      : renderPreviewText(previewTextToRender);
   }
 
   if (latestMessage.command) {
@@ -55,58 +94,56 @@ export const getLatestMessagePreview = <
   }
 
   if (latestMessage.attachments?.length) {
-    return t('🏙 Attachment...');
+    return t<string>('🏙 Attachment...');
   }
 
-  return t('Empty message...');
+  return t<string>('Empty message...');
+};
+
+export type GroupChannelDisplayInfo = { image?: string; name?: string }[];
+
+export const getGroupChannelDisplayInfo = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>(
+  channel: Channel<StreamChatGenerics>,
+): GroupChannelDisplayInfo | undefined => {
+  const members = Object.values(channel.state.members);
+  if (members.length <= 2) return;
+
+  const info: GroupChannelDisplayInfo = [];
+  for (let i = 0; i < members.length; i++) {
+    const { user } = members[i];
+    if (!user?.name && !user?.image) continue;
+    info.push({ image: user.image, name: user.name });
+    if (info.length === 4) break;
+  }
+  return info;
+};
+
+const getChannelDisplayInfo = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>(
+  info: 'name' | 'image',
+  channel: Channel<StreamChatGenerics>,
+  currentUser?: UserResponse<StreamChatGenerics>,
+) => {
+  if (channel.data?.[info]) return channel.data[info];
+  const members = Object.values(channel.state.members);
+  if (members.length !== 2) return;
+  const otherMember = members.find((member) => member.user?.id !== currentUser?.id);
+  return otherMember?.user?.[info];
 };
 
 export const getDisplayTitle = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  channel: Channel<At, Ch, Co, Ev, Me, Re, Us>,
-  currentUser?: UserResponse<Us>,
-) => {
-  let title = channel.data?.name;
-  const members = Object.values(channel.state.members);
-
-  if (!title && members.length === 2) {
-    const otherMember = members.find((member) => member.user?.id !== currentUser?.id);
-    if (otherMember?.user?.name) {
-      title = otherMember.user.name;
-    }
-  }
-
-  return title;
-};
+  channel: Channel<StreamChatGenerics>,
+  currentUser?: UserResponse<StreamChatGenerics>,
+) => getChannelDisplayInfo('name', channel, currentUser);
 
 export const getDisplayImage = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  channel: Channel<At, Ch, Co, Ev, Me, Re, Us>,
-  currentUser?: UserResponse<Us>,
-) => {
-  let image = channel.data?.image;
-  const members = Object.values(channel.state.members);
-
-  if (!image && members.length === 2) {
-    const otherMember = members.find((member) => member.user?.id !== currentUser?.id);
-    if (otherMember?.user?.image) {
-      image = otherMember.user.image;
-    }
-  }
-
-  return image;
-};
+  channel: Channel<StreamChatGenerics>,
+  currentUser?: UserResponse<StreamChatGenerics>,
+) => getChannelDisplayInfo('image', channel, currentUser);

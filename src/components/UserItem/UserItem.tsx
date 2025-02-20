@@ -1,4 +1,5 @@
 import React from 'react';
+import clsx from 'clsx';
 
 import { AvatarProps, Avatar as DefaultAvatar } from '../Avatar';
 
@@ -23,37 +24,41 @@ export type UserItemProps = {
 /**
  * UI component for mentions rendered in suggestion list
  */
-const UnMemoizedUserItem: React.FC<UserItemProps> = (props) => {
-  const { Avatar = DefaultAvatar, entity } = props;
-
-  const hasEntity = Object.keys(entity).length;
+const UnMemoizedUserItem = ({ Avatar = DefaultAvatar, entity }: UserItemProps) => {
+  const hasEntity = !!Object.keys(entity).length;
   const itemParts = entity?.itemNameParts;
 
   const renderName = () => {
     if (!hasEntity) return null;
 
-    return (
-      hasEntity &&
-      itemParts.parts.map((part, i) =>
-        part.toLowerCase() === itemParts.match.toLowerCase() ? (
-          <span className='str-chat__emoji-item--highlight' key={`part-${i}`}>
-            {part}
-          </span>
-        ) : (
-          <span className='str-chat__emoji-item--part' key={`part-${i}`}>
-            {part}
-          </span>
-        ),
-      )
-    );
+    return itemParts.parts.map((part, i) => {
+      const matches = part.toLowerCase() === itemParts.match.toLowerCase();
+
+      return (
+        <span
+          className={clsx({
+            'str-chat__emoji-item--highlight': matches,
+            'str-chat__emoji-item--part': !matches,
+          })}
+          key={`part-${i}`}
+        >
+          {part}
+        </span>
+      );
+    });
   };
 
   return (
     <div className='str-chat__user-item'>
-      <Avatar image={entity.image} name={entity.name || entity.id} size={20} />
+      <Avatar
+        className='str-chat__avatar--autocomplete-item'
+        image={entity.image}
+        name={entity.name || entity.id}
+      />
       <span className='str-chat__user-item--name' data-testid={'user-item-name'}>
         {renderName()}
       </span>
+      <div className='str-chat__user-item-at'>@</div>
     </div>
   );
 };

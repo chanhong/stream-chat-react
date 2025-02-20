@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { PropsWithChildren } from 'react';
 
 export type CommandItemProps = {
   entity: {
@@ -11,7 +11,7 @@ export type CommandItemProps = {
   };
 };
 
-const UnMemoizedCommandItem: React.FC<CommandItemProps> = (props) => {
+const UnMemoizedCommandItem = (props: PropsWithChildren<CommandItemProps>) => {
   const { entity } = props;
 
   return (
@@ -25,4 +25,6 @@ const UnMemoizedCommandItem: React.FC<CommandItemProps> = (props) => {
   );
 };
 
-export const CommandItem = React.memo(UnMemoizedCommandItem) as typeof UnMemoizedCommandItem;
+export const CommandItem = React.memo(
+  UnMemoizedCommandItem,
+) as typeof UnMemoizedCommandItem;

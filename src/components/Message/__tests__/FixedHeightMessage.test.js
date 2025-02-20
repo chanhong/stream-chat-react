@@ -6,18 +6,22 @@ import { FixedHeightMessage } from '../FixedHeightMessage';
 
 import { Avatar as AvatarMock } from '../../Avatar';
 import { Gallery as GalleryMock } from '../../Gallery';
+import { Message } from '../Message';
 import { MessageActions as MessageActionsMock } from '../../MessageActions';
 import { MML as MMLMock } from '../../MML';
 
+import { ChannelActionProvider } from '../../../context/ChannelActionContext';
 import { ChannelStateProvider } from '../../../context/ChannelStateContext';
 import { ChatProvider } from '../../../context/ChatContext';
 import { TranslationProvider } from '../../../context/TranslationContext';
+
 import {
   generateChannel,
   generateMessage,
   generateUser,
   getTestClientWithUser,
 } from '../../../mock-builders';
+import { ComponentProvider } from '../../../context';
 
 jest.mock('../../Avatar', () => ({ Avatar: jest.fn(() => <div />) }));
 jest.mock('../../MML', () => ({ MML: jest.fn(() => <div />) }));
@@ -37,19 +41,29 @@ async function renderMsg(message) {
 
   return render(
     <ChatProvider value={{ client, theme: 'dark' }}>
-      <ChannelStateProvider
-        value={{ channel, channelCapabilities: { 'delete-own-message': true } }}
+      <TranslationProvider
+        value={{
+          t: (key) => key,
+          tDateTimeParser: customDateTimeParser,
+          userLanguage: 'en',
+        }}
       >
-        <TranslationProvider
-          value={{
-            t: (key) => key,
-            tDateTimeParser: customDateTimeParser,
-            userLanguage: 'en',
-          }}
+        <ChannelStateProvider
+          value={{ channel, channelCapabilities: { 'delete-own-message': true } }}
         >
-          <FixedHeightMessage message={message} />
-        </TranslationProvider>
-      </ChannelStateProvider>
+          <ChannelActionProvider
+            value={{
+              openThread: jest.fn(),
+              removeMessage: jest.fn(),
+              updateMessage: jest.fn(),
+            }}
+          >
+            <ComponentProvider value={{}}>
+              <Message message={message} Message={FixedHeightMessage} />
+            </ComponentProvider>
+          </ChannelActionProvider>
+        </ChannelStateProvider>
+      </TranslationProvider>
     </ChatProvider>,
   );
 }
@@ -65,17 +79,20 @@ describe('<FixedHeightMessage />', () => {
   });
 
   it('should render message images', async () => {
-    const image = { image_url: 'image.jpg', type: 'image' };
+    const image = { image_url: 'http://image.jpg', type: 'image' };
     const attachments = [image, image, image];
     const message = generateMessage({ attachments, user: alice });
     await renderMsg(message);
-    expect(GalleryMock).toHaveBeenCalledWith({ images: attachments }, {});
+    expect(GalleryMock).toHaveBeenCalledWith({ images: attachments }, undefined);
   });
 
   it('should render user avatar', async () => {
     const message = generateMessage({ user: alice });
     await renderMsg(message);
-    expect(AvatarMock).toHaveBeenCalledWith(expect.objectContaining(aliceProfile), {});
+    expect(AvatarMock).toHaveBeenCalledWith(
+      expect.objectContaining(aliceProfile),
+      undefined,
+    );
   });
 
   it('should render MML', async () => {
@@ -84,14 +101,17 @@ describe('<FixedHeightMessage />', () => {
     await renderMsg(message);
     expect(MMLMock).toHaveBeenCalledWith(
       expect.objectContaining({ align: 'left', source: mml }),
-      {},
+      undefined,
     );
   });
 
   it('should render message action for owner', async () => {
     const message = generateMessage({ user: alice });
     await renderMsg(message);
-    expect(MessageActionsMock).toHaveBeenCalledWith(expect.objectContaining({ message }), {});
+    expect(MessageActionsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ message }),
+      undefined,
+    );
     expect(MessageActionsMock).toHaveReturnedWith(['delete']);
   });
 

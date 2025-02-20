@@ -1,240 +1,108 @@
-import React, { useEffect, useRef, useState } from 'react';
-import throttle from 'lodash.throttle';
+import clsx from 'clsx';
+import React from 'react';
 
 import {
-  ChannelSearchFunctionParams,
+  ChannelSearchControllerParams,
+  useChannelSearch,
+} from './hooks/useChannelSearch';
+
+import type { AdditionalSearchBarProps, SearchBarProps } from './SearchBar';
+import { SearchBar as DefaultSearchBar } from './SearchBar';
+import {
+  AdditionalSearchInputProps,
   SearchInput as DefaultSearchInput,
   SearchInputProps,
 } from './SearchInput';
-import { DropdownContainerProps, SearchResultItemProps, SearchResults } from './SearchResults';
+import { AdditionalSearchResultsProps, SearchResults } from './SearchResults';
 
-import { ChannelOrUserResponse, isChannel } from './utils';
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
-import { useChatContext } from '../../context/ChatContext';
-
-import type {
-  ChannelFilters,
-  ChannelOptions,
-  ChannelSort,
-  UserFilters,
-  UserOptions,
-  UserSort,
-} from 'stream-chat';
-
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
-
-export type SearchQueryParams<
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
-  channelFilters?: {
-    filters?: ChannelFilters<Ch, Co, Us>;
-    options?: ChannelOptions;
-    sort?: ChannelSort<Ch>;
-  };
-  userFilters?: {
-    filters?: UserFilters<Us>;
-    options?: UserOptions;
-    sort?: UserSort<Us>;
-  };
+export type AdditionalChannelSearchProps = {
+  /** Custom UI component to display the search bar with text input */
+  SearchBar?: React.ComponentType<SearchBarProps>;
+  /** Custom UI component to display the search text input */
+  SearchInput?: React.ComponentType<SearchInputProps>;
 };
 
 export type ChannelSearchProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
-  /** The type of channel to create on user result select, defaults to `messaging` */
-  channelType?: string;
-  /** Custom UI component to display all of the search results, defaults to accepts same props as: [DefaultDropdownContainer](https://github.com/GetStream/stream-chat-react/blob/master/src/components/ChannelSearch/SearchResults.tsx)  */
-  DropdownContainer?: React.ComponentType<DropdownContainerProps<At, Ch, Co, Ev, Me, Re, Us>>;
-  /** Custom handler function to run on search result item selection */
-  onSelectResult?: (
-    result: ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>,
-  ) => Promise<void> | void;
-  /** Display search results as an absolutely positioned popup, defaults to false and shows inline */
-  popupResults?: boolean;
-  /** Custom UI component to display empty search results */
-  SearchEmpty?: React.ComponentType;
-  /** Boolean to search for channels as well as users in the server query, default is false and just searches for users */
-  searchForChannels?: boolean;
-  /** Custom search function to override default */
-  searchFunction?: (
-    params: ChannelSearchFunctionParams<At, Ch, Co, Ev, Me, Re, Us>,
-    event: React.BaseSyntheticEvent,
-  ) => Promise<void> | void;
-  /** Custom UI component to display the search text input */
-  SearchInput?: React.ComponentType<SearchInputProps<At, Ch, Co, Ev, Me, Re, Us>>;
-  /** Custom UI component to display the search loading state */
-  SearchLoading?: React.ComponentType;
-  /** Object containing filters/sort/options overrides for user search */
-  searchQueryParams?: SearchQueryParams<Ch, Co, Us>;
-  /** Custom UI component to display a search result list item, defaults to and accepts same props as: [DefaultSearchResultItem](https://github.com/GetStream/stream-chat-react/blob/master/src/components/ChannelSearch/SearchResults.tsx) */
-  SearchResultItem?: React.ComponentType<SearchResultItemProps<At, Ch, Co, Ev, Me, Re, Us>>;
-  /** Custom UI component to display the search results header */
-  SearchResultsHeader?: React.ComponentType;
-};
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = AdditionalSearchBarProps &
+  AdditionalSearchInputProps &
+  AdditionalSearchResultsProps<StreamChatGenerics> &
+  AdditionalChannelSearchProps &
+  ChannelSearchControllerParams<StreamChatGenerics>;
 
 const UnMemoizedChannelSearch = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: ChannelSearchProps<At, Ch, Co, Ev, Me, Re, Us>,
+  props: ChannelSearchProps<StreamChatGenerics>,
 ) => {
   const {
-    channelType = 'messaging',
-    DropdownContainer,
-    onSelectResult,
+    AppMenu,
+    ClearInputIcon,
+    ExitSearchIcon,
+    MenuIcon,
+    placeholder,
     popupResults = false,
+    SearchBar = DefaultSearchBar,
     SearchEmpty,
-    searchForChannels = false,
-    searchFunction,
     SearchInput = DefaultSearchInput,
+    SearchInputIcon,
     SearchLoading,
-    searchQueryParams,
     SearchResultItem,
     SearchResultsHeader,
+    SearchResultsList,
+    ...channelSearchParams
   } = props;
 
-  const { client, setActiveChannel } = useChatContext<At, Ch, Co, Ev, Me, Re, Us>('ChannelSearch');
-
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Array<ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>>>(
-    [],
-  );
-  const [resultsOpen, setResultsOpen] = useState(false);
-  const [searching, setSearching] = useState(false);
-
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const clearState = () => {
-    setQuery('');
-    setResults([]);
-    setResultsOpen(false);
-    setSearching(false);
-  };
-
-  useEffect(() => {
-    const clickListener = (event: MouseEvent) => {
-      if (resultsOpen && event.target instanceof HTMLElement) {
-        const isInputClick = inputRef.current?.contains(event.target);
-        if (!isInputClick) {
-          clearState();
-        }
-      }
-    };
-
-    document.addEventListener('click', clickListener);
-    return () => document.removeEventListener('click', clickListener);
-  }, [resultsOpen]);
-
-  const selectResult = async (result: ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>) => {
-    if (!client.userID) return;
-
-    if (isChannel(result)) {
-      setActiveChannel(result);
-    } else {
-      // @ts-expect-error
-      const newChannel = client.channel(channelType, { members: [client.userID, result.id] });
-      await newChannel.watch();
-
-      setActiveChannel(newChannel);
-    }
-    clearState();
-  };
-
-  const getChannels = async (text: string) => {
-    if (!text || searching) return;
-    setSearching(true);
-
-    try {
-      const userResponse = await client.queryUsers(
-        // @ts-expect-error
-        {
-          $or: [{ id: { $autocomplete: text } }, { name: { $autocomplete: text } }],
-          id: { $ne: client.userID },
-          ...searchQueryParams?.userFilters?.filters,
-        },
-        { id: 1, ...searchQueryParams?.userFilters?.sort },
-        { limit: 8, ...searchQueryParams?.userFilters?.options },
-      );
-
-      if (searchForChannels) {
-        const channelResponse = client.queryChannels(
-          // @ts-expect-error
-          {
-            name: { $autocomplete: text },
-            ...searchQueryParams?.channelFilters?.filters,
-          },
-          searchQueryParams?.channelFilters?.sort || {},
-          { limit: 5, ...searchQueryParams?.channelFilters?.options },
-        );
-
-        const [channels, { users }] = await Promise.all([channelResponse, userResponse]);
-
-        setResults([...channels, ...users]);
-        setResultsOpen(true);
-        setSearching(false);
-        return;
-      }
-
-      const { users } = await Promise.resolve(userResponse);
-
-      setResults(users);
-      setResultsOpen(true);
-    } catch (error) {
-      clearState();
-      console.error(error);
-    }
-
-    setSearching(false);
-  };
-
-  const getChannelsThrottled = throttle(getChannels, 200);
-
-  const onSearch = (event: React.BaseSyntheticEvent) => {
-    event.preventDefault();
-    setQuery(event.target.value);
-    getChannelsThrottled(event.target.value);
-  };
-
-  const channelSearchParams = {
-    setQuery,
-    setResults,
-    setResultsOpen,
-    setSearching,
-  };
+  const {
+    activateSearch,
+    clearState,
+    exitSearch,
+    inputIsFocused,
+    inputRef,
+    onSearch,
+    query,
+    results,
+    searchBarRef,
+    searching,
+    selectResult,
+  } = useChannelSearch<StreamChatGenerics>(channelSearchParams);
 
   return (
-    <div className='str-chat__channel-search'>
-      <SearchInput
-        channelSearchParams={channelSearchParams}
+    <div
+      className={clsx(
+        'str-chat__channel-search',
+        popupResults
+          ? 'str-chat__channel-search--popup'
+          : 'str-chat__channel-search--inline',
+        {
+          'str-chat__channel-search--with-results': results.length > 0,
+        },
+      )}
+      data-testid='channel-search'
+    >
+      <SearchBar
+        activateSearch={activateSearch}
+        AppMenu={AppMenu}
+        ClearInputIcon={ClearInputIcon}
+        clearState={clearState}
+        disabled={channelSearchParams.disabled}
+        exitSearch={exitSearch}
+        ExitSearchIcon={ExitSearchIcon}
+        inputIsFocused={inputIsFocused}
         inputRef={inputRef}
+        MenuIcon={MenuIcon}
         onSearch={onSearch}
+        placeholder={placeholder}
         query={query}
-        searchFunction={searchFunction}
+        searchBarRef={searchBarRef}
+        SearchInput={SearchInput}
+        SearchInputIcon={SearchInputIcon}
       />
+
       {query && (
         <SearchResults
-          DropdownContainer={DropdownContainer}
           popupResults={popupResults}
           results={results}
           SearchEmpty={SearchEmpty}
@@ -242,7 +110,8 @@ const UnMemoizedChannelSearch = <
           SearchLoading={SearchLoading}
           SearchResultItem={SearchResultItem}
           SearchResultsHeader={SearchResultsHeader}
-          selectResult={onSelectResult || selectResult}
+          SearchResultsList={SearchResultsList}
+          selectResult={selectResult}
         />
       )}
     </div>
@@ -254,4 +123,6 @@ const UnMemoizedChannelSearch = <
  * Clicking on a list item will navigate you into a channel with the selected user. It can be used
  * on its own or added to the ChannelList component by setting the `showChannelSearch` prop to true.
  */
-export const ChannelSearch = React.memo(UnMemoizedChannelSearch) as typeof UnMemoizedChannelSearch;
+export const ChannelSearch = React.memo(
+  UnMemoizedChannelSearch,
+) as typeof UnMemoizedChannelSearch;

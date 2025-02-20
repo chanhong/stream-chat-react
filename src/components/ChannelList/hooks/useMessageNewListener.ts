@@ -7,45 +7,44 @@ import { useChatContext } from '../../../context/ChatContext';
 
 import type { Channel, Event } from 'stream-chat';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../../types/types';
+import type { DefaultStreamChatGenerics } from '../../../types/types';
 
 export const useMessageNewListener = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  setChannels: React.Dispatch<React.SetStateAction<Array<Channel<At, Ch, Co, Ev, Me, Re, Us>>>>,
+  setChannels: React.Dispatch<React.SetStateAction<Array<Channel<StreamChatGenerics>>>>,
+  customHandler?: (
+    setChannels: React.Dispatch<React.SetStateAction<Array<Channel<StreamChatGenerics>>>>,
+    event: Event<StreamChatGenerics>,
+  ) => void,
   lockChannelOrder = false,
   allowNewMessagesFromUnfilteredChannels = true,
 ) => {
-  const { client } = useChatContext<At, Ch, Co, Ev, Me, Re, Us>('useMessageNewListener');
+  const { client } = useChatContext<StreamChatGenerics>('useMessageNewListener');
 
   useEffect(() => {
-    const handleEvent = (event: Event<At, Ch, Co, Ev, Me, Re, Us>) => {
-      setChannels((channels) => {
-        const channelInList = channels.filter((channel) => channel.cid === event.cid).length > 0;
+    const handleEvent = (event: Event<StreamChatGenerics>) => {
+      if (customHandler && typeof customHandler === 'function') {
+        customHandler(setChannels, event);
+      } else {
+        setChannels((channels) => {
+          const channelInList =
+            channels.filter((channel) => channel.cid === event.cid).length > 0;
 
-        if (!channelInList && allowNewMessagesFromUnfilteredChannels && event.channel_type) {
-          const channel = client.channel(event.channel_type, event.channel_id);
-          return uniqBy([channel, ...channels], 'cid');
-        }
+          if (
+            !channelInList &&
+            allowNewMessagesFromUnfilteredChannels &&
+            event.channel_type
+          ) {
+            const channel = client.channel(event.channel_type, event.channel_id);
+            return uniqBy([channel, ...channels], 'cid');
+          }
 
-        if (!lockChannelOrder) return moveChannelUp({ channels, cid: event.cid || '' });
+          if (!lockChannelOrder) return moveChannelUp({ channels, cid: event.cid || '' });
 
-        return channels;
-      });
+          return channels;
+        });
+      }
     };
 
     client.on('message.new', handleEvent);
@@ -53,5 +52,11 @@ export const useMessageNewListener = <
     return () => {
       client.off('message.new', handleEvent);
     };
-  }, [lockChannelOrder]);
+  }, [
+    allowNewMessagesFromUnfilteredChannels,
+    client,
+    customHandler,
+    lockChannelOrder,
+    setChannels,
+  ]);
 };

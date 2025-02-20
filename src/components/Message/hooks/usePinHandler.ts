@@ -1,24 +1,21 @@
 import { defaultPinPermissions, validateAndGetMessage } from '../utils';
 
 import { useChannelActionContext } from '../../../context/ChannelActionContext';
-import { StreamMessage, useChannelStateContext } from '../../../context/ChannelStateContext';
+import {
+  StreamMessage,
+  useChannelStateContext,
+} from '../../../context/ChannelStateContext';
 import { useChatContext } from '../../../context/ChatContext';
 import { useTranslationContext } from '../../../context/TranslationContext';
 
 import type { ReactEventHandler } from '../types';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../../types/types';
+import type { DefaultStreamChatGenerics } from '../../../types/types';
 
 // @deprecated in favor of `channelCapabilities` - TODO: remove in next major release
-export type PinEnabledUserRoles<T extends string = string> = Partial<Record<T, boolean>> & {
+export type PinEnabledUserRoles<T extends string = string> = Partial<
+  Record<T, boolean>
+> & {
   admin?: boolean;
   anonymous?: boolean;
   channel_member?: boolean;
@@ -31,9 +28,10 @@ export type PinEnabledUserRoles<T extends string = string> = Partial<Record<T, b
 };
 
 // @deprecated in favor of `channelCapabilities` - TODO: remove in next major release
-export type PinPermissions<T extends string = string, U extends string = string> = Partial<
-  Record<T, PinEnabledUserRoles<U>>
-> & {
+export type PinPermissions<
+  T extends string = string,
+  U extends string = string,
+> = Partial<Record<T, PinEnabledUserRoles<U>>> & {
   commerce?: PinEnabledUserRoles<U>;
   gaming?: PinEnabledUserRoles<U>;
   livestream?: PinEnabledUserRoles<U>;
@@ -42,39 +40,26 @@ export type PinPermissions<T extends string = string, U extends string = string>
 };
 
 export type PinMessageNotifications<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 > = {
-  getErrorNotification?: (message: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>) => string;
+  getErrorNotification?: (message: StreamMessage<StreamChatGenerics>) => string;
   notify?: (notificationText: string, type: 'success' | 'error') => void;
 };
 
 export const usePinHandler = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  message: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>,
-  // @ts-expect-error @deprecated in favor of `channelCapabilities` - TODO: remove in next major release
-  permissions: PinPermissions = defaultPinPermissions, // eslint-disable-line
-  notifications: PinMessageNotifications<At, Ch, Co, Ev, Me, Re, Us> = {},
+  message: StreamMessage<StreamChatGenerics>,
+  // @deprecated in favor of `channelCapabilities` - TODO: remove in next major release
+  _permissions: PinPermissions = defaultPinPermissions, // eslint-disable-line
+  notifications: PinMessageNotifications<StreamChatGenerics> = {},
 ) => {
   const { getErrorNotification, notify } = notifications;
 
-  const { updateMessage } = useChannelActionContext<At, Ch, Co, Ev, Me, Re, Us>('usePinHandler');
-  const { channelCapabilities = {} } = useChannelStateContext<At, Ch, Co, Ev, Me, Re, Us>(
-    'usePinHandler',
-  );
-  const { client } = useChatContext<At, Ch, Co, Ev, Me, Re, Us>('usePinHandler');
+  const { updateMessage } = useChannelActionContext<StreamChatGenerics>('usePinHandler');
+  const { channelCapabilities = {} } =
+    useChannelStateContext<StreamChatGenerics>('usePinHandler');
+  const { client } = useChatContext<StreamChatGenerics>('usePinHandler');
   const { t } = useTranslationContext('usePinHandler');
 
   const canPin = !!channelCapabilities['pin-message'];
@@ -95,9 +80,7 @@ export const usePinHandler = <
 
         updateMessage(optimisticMessage);
 
-        const messageResponse = await client.pinMessage(message);
-
-        updateMessage(messageResponse.message);
+        await client.pinMessage(message);
       } catch (e) {
         const errorMessage =
           getErrorNotification && validateAndGetMessage(getErrorNotification, [message]);
@@ -117,9 +100,7 @@ export const usePinHandler = <
 
         updateMessage(optimisticMessage);
 
-        const messageResponse = await client.unpinMessage(message);
-
-        updateMessage(messageResponse.message);
+        await client.unpinMessage(message);
       } catch (e) {
         const errorMessage =
           getErrorNotification && validateAndGetMessage(getErrorNotification, [message]);

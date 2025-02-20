@@ -1,19 +1,16 @@
 import React, { PropsWithChildren, useContext } from 'react';
 
-import type { AppSettingsAPIResponse, Channel, Mute, StreamChat } from 'stream-chat';
-
 import { getDisplayName } from './utils/getDisplayName';
-import type { Theme } from '../components/Chat/Chat';
+
 import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-  UnknownType,
-} from '../types/types';
+  AppSettingsAPIResponse,
+  Channel,
+  Mute,
+  SearchController,
+} from 'stream-chat';
+import type { ChatProps } from '../components/Chat/Chat';
+import type { DefaultStreamChatGenerics, UnknownType } from '../types/types';
+import type { ChannelsQueryState } from '../components/Chat/hooks/useChannelsQueryState';
 
 type CSSClasses =
   | 'chat'
@@ -29,62 +26,63 @@ type CSSClasses =
 
 export type CustomClasses = Partial<Record<CSSClasses, string>>;
 
+type ChannelCID = string; // e.g.: "messaging:general"
+
 export type ChatContextValue<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 > = {
-  client: StreamChat<At, Ch, Co, Ev, Me, Re, Us>;
+  /**
+   * Indicates, whether a channels query has been triggered within ChannelList by its channels pagination controller.
+   */
+  channelsQueryState: ChannelsQueryState;
   closeMobileNav: () => void;
-  mutes: Mute<Us>[];
+  getAppSettings: () => Promise<AppSettingsAPIResponse<StreamChatGenerics>> | null;
+  latestMessageDatesByChannels: Record<ChannelCID, Date>;
+  mutes: Array<Mute<StreamChatGenerics>>;
   openMobileNav: () => void;
+  /** Instance of SearchController class that allows to control all the search operations. */
+  searchController: SearchController<StreamChatGenerics>;
+  /**
+   * Sets active channel to be rendered within Channel component.
+   * @param newChannel
+   * @param watchers
+   * @param event
+   */
   setActiveChannel: (
-    newChannel?: Channel<At, Ch, Co, Ev, Me, Re, Us>,
+    newChannel?: Channel<StreamChatGenerics>,
     watchers?: { limit?: number; offset?: number },
     event?: React.BaseSyntheticEvent,
   ) => void;
-  /** @deprecated */
-  theme: Theme;
   useImageFlagEmojisOnWindows: boolean;
-  appSettings?: AppSettingsAPIResponse<Co>;
-  channel?: Channel<At, Ch, Co, Ev, Me, Re, Us>;
+  /**
+   * Active channel used to render the contents of the Channel component.
+   */
+  channel?: Channel<StreamChatGenerics>;
+  /**
+   * Object through which custom classes can be set for main container components of the SDK.
+   */
   customClasses?: CustomClasses;
   navOpen?: boolean;
-};
+} & Partial<Pick<ChatProps<StreamChatGenerics>, 'isMessageAIGenerated'>> &
+  Required<Pick<ChatProps<StreamChatGenerics>, 'theme' | 'client'>>;
 
 export const ChatContext = React.createContext<ChatContextValue | undefined>(undefined);
 
 export const ChatProvider = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >({
   children,
   value,
 }: PropsWithChildren<{
-  value: ChatContextValue<At, Ch, Co, Ev, Me, Re, Us>;
+  value: ChatContextValue<StreamChatGenerics>;
 }>) => (
-  <ChatContext.Provider value={(value as unknown) as ChatContextValue}>
+  <ChatContext.Provider value={value as unknown as ChatContextValue}>
     {children}
   </ChatContext.Provider>
 );
 
 export const useChatContext = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
   componentName?: string,
 ) => {
@@ -95,10 +93,10 @@ export const useChatContext = <
       `The useChatContext hook was called outside of the ChatContext provider. Make sure this hook is called within a child of the Chat component. The errored call is located in the ${componentName} component.`,
     );
 
-    return {} as ChatContextValue<At, Ch, Co, Ev, Me, Re, Us>;
+    return {} as ChatContextValue<StreamChatGenerics>;
   }
 
-  return (contextValue as unknown) as ChatContextValue<At, Ch, Co, Ev, Me, Re, Us>;
+  return contextValue as unknown as ChatContextValue<StreamChatGenerics>;
 };
 
 /**
@@ -108,20 +106,14 @@ export const useChatContext = <
  */
 export const withChatContext = <
   P extends UnknownType,
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
   Component: React.ComponentType<P>,
-): React.FC<Omit<P, keyof ChatContextValue<At, Ch, Co, Ev, Me, Re, Us>>> => {
+) => {
   const WithChatContextComponent = (
-    props: Omit<P, keyof ChatContextValue<At, Ch, Co, Ev, Me, Re, Us>>,
+    props: Omit<P, keyof ChatContextValue<StreamChatGenerics>>,
   ) => {
-    const chatContext = useChatContext<At, Ch, Co, Ev, Me, Re, Us>();
+    const chatContext = useChatContext<StreamChatGenerics>();
 
     return <Component {...(props as P)} {...chatContext} />;
   };

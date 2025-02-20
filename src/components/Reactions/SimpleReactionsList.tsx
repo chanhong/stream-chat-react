@@ -1,172 +1,119 @@
-import React, { Suspense, useMemo, useState } from 'react';
+import React, { PropsWithChildren, useState } from 'react';
+import clsx from 'clsx';
 
-import { getStrippedEmojiData, ReactionEmoji } from '../Channel/emojiData';
+import type { ReactionGroupResponse, ReactionResponse } from 'stream-chat';
+import { MessageContextValue, useMessageContext } from '../../context/MessageContext';
+import { useProcessReactions } from './hooks/useProcessReactions';
+import { useEnterLeaveHandlers } from '../Tooltip/hooks';
+import { PopperTooltip } from '../Tooltip';
 
-import { useEmojiContext } from '../../context/EmojiContext';
-import { useMessageContext } from '../../context/MessageContext';
+import type { DefaultStreamChatGenerics } from '../../types/types';
+import type { ReactionOptions } from './reactionOptions';
 
-import type { NimbleEmojiProps } from 'emoji-mart';
-import type { ReactionResponse } from 'stream-chat';
+type WithTooltipProps = {
+  title: React.ReactNode;
+  onMouseEnter?: React.MouseEventHandler;
+  onMouseLeave?: React.MouseEventHandler;
+};
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+const WithTooltip = ({
+  children,
+  onMouseEnter,
+  onMouseLeave,
+  title,
+}: PropsWithChildren<WithTooltipProps>) => {
+  const [referenceElement, setReferenceElement] = useState<HTMLSpanElement | null>(null);
+  const { handleEnter, handleLeave, tooltipVisible } = useEnterLeaveHandlers({
+    onMouseEnter,
+    onMouseLeave,
+  });
+
+  return (
+    <>
+      <PopperTooltip referenceElement={referenceElement} visible={tooltipVisible}>
+        {title}
+      </PopperTooltip>
+      <span
+        onMouseEnter={handleEnter}
+        onMouseLeave={handleLeave}
+        ref={setReferenceElement}
+      >
+        {children}
+      </span>
+    </>
+  );
+};
 
 export type SimpleReactionsListProps<
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
-  /** Additional props to be passed to the [NimbleEmoji](https://github.com/missive/emoji-mart/blob/master/src/components/emoji/nimble-emoji.js) component from `emoji-mart` */
-  additionalEmojiProps?: Partial<NimbleEmojiProps>;
-  /** Function that adds/removes a reaction on a message (overrides the function stored in `MessageContext`) */
-  handleReaction?: (reactionType: string, event: React.BaseSyntheticEvent) => Promise<void>;
-  /** An object that keeps track of the count of each type of reaction on a message */
-  reaction_counts?: { [key: string]: number };
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = Partial<Pick<MessageContextValue, 'handleFetchReactions' | 'handleReaction'>> & {
+  /** An array of the own reaction objects to distinguish own reactions visually */
+  own_reactions?: ReactionResponse<StreamChatGenerics>[];
+  /**
+   * An object that keeps track of the count of each type of reaction on a message
+   * @deprecated This override value is no longer taken into account. Use `reaction_groups` to override reaction counts instead.
+   * */
+  reaction_counts?: Record<string, number>;
+  /** An object containing summary for each reaction type on a message */
+  reaction_groups?: Record<string, ReactionGroupResponse>;
   /** A list of the currently supported reactions on a message */
-  reactionOptions?: ReactionEmoji[];
+  reactionOptions?: ReactionOptions;
   /** An array of the reaction objects to display in the list */
-  reactions?: ReactionResponse<Re, Us>[];
+  reactions?: ReactionResponse<StreamChatGenerics>[];
 };
 
 const UnMemoizedSimpleReactionsList = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: SimpleReactionsListProps<Re, Us>,
+  props: SimpleReactionsListProps<StreamChatGenerics>,
 ) => {
-  const {
-    additionalEmojiProps = {},
-    handleReaction: propHandleReaction,
-    reaction_counts: propReactionCounts,
-    reactionOptions: propReactionOptions,
-    reactions: propReactions,
-  } = props;
+  const { handleReaction: propHandleReaction, ...rest } = props;
 
-  const { Emoji, emojiConfig } = useEmojiContext('SimpleReactionsList');
-  const { handleReaction: contextHandleReaction, message } = useMessageContext<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >('SimpleReactionsList');
+  const { handleReaction: contextHandleReaction } =
+    useMessageContext<StreamChatGenerics>('SimpleReactionsList');
 
-  const { defaultMinimalEmojis, emojiData: fullEmojiData, emojiSetDef } = emojiConfig || {};
-
-  const [tooltipReactionType, setTooltipReactionType] = useState<string | undefined>(undefined);
+  const { existingReactions, hasReactions, totalReactionCount } =
+    useProcessReactions(rest);
 
   const handleReaction = propHandleReaction || contextHandleReaction;
-  const reactions = propReactions || message.latest_reactions || [];
-  const reactionCounts = propReactionCounts || message.reaction_counts || {};
-  const reactionOptions = propReactionOptions || defaultMinimalEmojis;
-  const reactionsAreCustom = !!propReactionOptions?.length;
 
-  const emojiData = useMemo(
-    () => (reactionsAreCustom ? fullEmojiData : getStrippedEmojiData(fullEmojiData)),
-    [fullEmojiData, reactionsAreCustom],
-  );
-
-  if (!reactions.length) return null;
-
-  const getUsersPerReactionType = (type: string) =>
-    reactions
-      .map((reaction) => {
-        if (reaction.type === type) {
-          return reaction.user?.name || reaction.user?.id;
-        }
-        return null;
-      })
-      .filter(Boolean);
-
-  const getTotalReactionCount = () =>
-    Object.values(reactionCounts).reduce((total, count) => total + count, 0);
-
-  const getCurrentMessageReactionTypes = () => {
-    const reactionTypes: string[] = [];
-    reactions.forEach(({ type }) => {
-      if (reactionTypes.indexOf(type) === -1) {
-        reactionTypes.push(type);
-      }
-    });
-    return reactionTypes;
-  };
-
-  const getEmojiByReactionType = (type: string): ReactionEmoji | undefined => {
-    const reactionEmoji = reactionOptions.find((option: ReactionEmoji) => option.id === type);
-    return reactionEmoji;
-  };
-
-  const getSupportedReactionMap = () => {
-    const reactionMap: Record<string, boolean> = {};
-    reactionOptions.forEach(({ id }) => (reactionMap[id] = true));
-    return reactionMap;
-  };
-
-  const messageReactionTypes = getCurrentMessageReactionTypes();
-  const supportedReactionMap = getSupportedReactionMap();
-
-  const supportedReactionsArePresent = messageReactionTypes.some(
-    (type) => supportedReactionMap[type],
-  );
-
-  if (!supportedReactionsArePresent) return null;
+  if (!hasReactions) return null;
 
   return (
-    <ul
-      className='str-chat__simple-reactions-list'
-      data-testid='simple-reaction-list'
-      onMouseLeave={() => setTooltipReactionType(undefined)}
-    >
-      {messageReactionTypes.map((reactionType, i) => {
-        const emojiObject = getEmojiByReactionType(reactionType);
+    <div className='str-chat__message-reactions-container'>
+      <ul
+        className='str-chat__simple-reactions-list str-chat__message-reactions'
+        data-testid='simple-reaction-list'
+      >
+        {existingReactions.map(
+          ({ EmojiComponent, isOwnReaction, latestReactedUserNames, reactionType }) => {
+            const tooltipContent = latestReactedUserNames.join(', ');
 
-        return emojiObject ? (
-          <li
-            className='str-chat__simple-reactions-list-item'
-            key={`${emojiObject.id}-${i}`}
-            onClick={(event) => handleReaction(reactionType, event)}
-          >
-            <span onMouseEnter={() => setTooltipReactionType(reactionType)}>
-              {
-                <Suspense fallback={null}>
-                  <Emoji
-                    data={emojiData}
-                    emoji={emojiObject}
-                    size={13}
-                    {...(reactionsAreCustom ? additionalEmojiProps : emojiSetDef)}
-                  />
-                </Suspense>
-              }
-              &nbsp;
-            </span>
-            {tooltipReactionType === emojiObject.id && (
-              <div className='str-chat__simple-reactions-list-tooltip'>
-                <div className='arrow' />
-                {getUsersPerReactionType(tooltipReactionType)?.join(', ')}
-              </div>
-            )}
+            return (
+              EmojiComponent && (
+                <li
+                  className={clsx('str-chat__simple-reactions-list-item', {
+                    'str-chat__message-reaction-own': isOwnReaction,
+                  })}
+                  key={reactionType}
+                  onClick={(event) => handleReaction(reactionType, event)}
+                  onKeyUp={(event) => handleReaction(reactionType, event)}
+                >
+                  <WithTooltip title={tooltipContent}>
+                    <EmojiComponent />
+                  </WithTooltip>
+                </li>
+              )
+            );
+          },
+        )}
+        {
+          <li className='str-chat__simple-reactions-list-item--last-number'>
+            {totalReactionCount}
           </li>
-        ) : null;
-      })}
-      {
-        <li className='str-chat__simple-reactions-list-item--last-number'>
-          {getTotalReactionCount()}
-        </li>
-      }
-    </ul>
+        }
+      </ul>
+    </div>
   );
 };
 

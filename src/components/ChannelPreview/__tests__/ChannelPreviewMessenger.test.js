@@ -1,8 +1,8 @@
 import React from 'react';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import renderer from 'react-test-renderer';
-
+import { toHaveNoViolations } from 'jest-axe';
+import { axe } from '../../../../axe-helper';
 import {
   generateChannel,
   generateUser,
@@ -12,21 +12,33 @@ import {
 } from 'mock-builders';
 
 import { ChannelPreviewMessenger } from '../ChannelPreviewMessenger';
+import { ChatProvider, ComponentProvider } from '../../../context';
+
+expect.extend(toHaveNoViolations);
+
+const PREVIEW_TEST_ID = 'channel-preview-button';
 
 describe('ChannelPreviewMessenger', () => {
   const clientUser = generateUser();
+
   let chatClient;
   let channel;
-  const renderComponent = (props) => (
-    <ChannelPreviewMessenger
-      channel={channel}
-      displayImage='https://randomimage.com/src.jpg'
-      displayTitle='Channel name'
-      latestMessage='Latest message!'
-      setActiveChannel={jest.fn()}
-      unread={10}
-      {...props}
-    />
+  const renderComponent = (props, componentOverrides = {}) => (
+    <ChatProvider value={{ client: chatClient }}>
+      <ComponentProvider value={componentOverrides}>
+        <div aria-label='Select Channel' role='listbox'>
+          <ChannelPreviewMessenger
+            channel={channel}
+            displayImage='https://randomimage.com/src.jpg'
+            displayTitle='Channel name'
+            latestMessagePreview='Latest message!'
+            setActiveChannel={jest.fn()}
+            unread={10}
+            {...props}
+          />
+        </div>
+      </ComponentProvider>
+    </ChatProvider>
   );
 
   const initializeChannel = async (c) => {
@@ -44,13 +56,13 @@ describe('ChannelPreviewMessenger', () => {
   });
 
   it('should render correctly', () => {
-    const tree = renderer.create(renderComponent()).toJSON();
-    expect(tree).toMatchSnapshot();
+    const { container } = render(renderComponent());
+    expect(container).toMatchSnapshot();
   });
 
   it('should call setActiveChannel on click', async () => {
     const setActiveChannel = jest.fn();
-    const { getByTestId } = render(
+    const { container, getByTestId } = render(
       renderComponent({
         setActiveChannel,
         watchers: {},
@@ -58,15 +70,32 @@ describe('ChannelPreviewMessenger', () => {
     );
 
     await waitFor(() => {
-      expect(getByTestId('channel-preview-button')).toBeInTheDocument();
+      expect(getByTestId(PREVIEW_TEST_ID)).toBeInTheDocument();
     });
 
-    fireEvent.click(getByTestId('channel-preview-button'));
+    fireEvent.click(getByTestId(PREVIEW_TEST_ID));
 
     await waitFor(() => {
-      // eslint-disable-next-line jest/prefer-called-with
       expect(setActiveChannel).toHaveBeenCalledTimes(1);
       expect(setActiveChannel).toHaveBeenCalledWith(channel, {});
     });
+
+    const results = await axe(container.firstChild.firstChild);
+
+    expect(results).toHaveNoViolations();
+  });
+
+  it('should render custom class name', () => {
+    const className = 'custom-xxx';
+    const { container } = render(renderComponent({ className }));
+    expect(container.querySelector(`.${className}`)).toBeInTheDocument();
+  });
+
+  it('should call custom onSelect function', () => {
+    const onSelect = jest.fn();
+    render(renderComponent({ onSelect }));
+    const previewButton = screen.queryByTestId(PREVIEW_TEST_ID);
+    fireEvent.click(previewButton);
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,101 +1,78 @@
-import React, { PropsWithChildren } from 'react';
+import React, { PropsWithChildren, useMemo } from 'react';
+import type { StreamChat } from 'stream-chat';
+import {
+  ChannelSearchSource,
+  MessageSearchSource,
+  SearchController,
+  UserSearchSource,
+} from 'stream-chat';
 
 import { useChat } from './hooks/useChat';
 import { useCreateChatContext } from './hooks/useCreateChatContext';
-import { CustomStyles, darkModeTheme, useCustomStyles } from './hooks/useCustomStyles';
+import { useChannelsQueryState } from './hooks/useChannelsQueryState';
 
 import { ChatProvider, CustomClasses } from '../../context/ChatContext';
-import { SupportedTranslations, TranslationProvider } from '../../context/TranslationContext';
+import { TranslationProvider } from '../../context/TranslationContext';
 
-import type { StreamChat } from 'stream-chat';
-
+import type { MessageContextValue } from '../../context';
+import type { SupportedTranslations } from '../../i18n/types';
 import type { Streami18n } from '../../i18n/Streami18n';
-
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
-
-export type Theme<T extends string = string> =
-  | 'commerce dark'
-  | 'commerce light'
-  | 'livestream dark'
-  | 'livestream light'
-  | 'messaging dark'
-  | 'messaging light'
-  | 'team dark'
-  | 'team light'
-  | T;
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
 export type ChatProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 > = {
   /** The StreamChat client object */
-  client: StreamChat<At, Ch, Co, Ev, Me, Re, Us>;
+  client: StreamChat<StreamChatGenerics>;
   /** Object containing custom CSS classnames to override the library's default container CSS */
   customClasses?: CustomClasses;
-  /** Object containing custom styles to override the default CSS variables */
-  customStyles?: CustomStyles;
-  /** If true, toggles the CSS variables to the default dark mode color palette */
-  darkMode?: boolean;
   /** Sets the default fallback language for UI component translation, defaults to 'en' for English */
   defaultLanguage?: SupportedTranslations;
   /** Instance of Stream i18n */
   i18nInstance?: Streami18n;
   /** Initial status of mobile navigation */
   initialNavOpen?: boolean;
-  /** @deprecated and to be removed in a future major release. Use the `customStyles` prop to adjust CSS variables and [customize the theme](https://getstream.io/chat/docs/sdk/react/customization/css_and_theming/#css-variables) of your app  */
-  theme?: Theme;
-  /** Windows 10 does not support country flag emojis out of the box. It chooses to render these emojis as characters instead. Stream
+  /** Instance of SearchController class that allows to control all the search operations. */
+  searchController?: SearchController<StreamChatGenerics>;
+  /** Used for injecting className/s to the Channel and ChannelList components */
+  theme?: string;
+  /**
+   * Windows 10 does not support country flag emojis out of the box. It chooses to render these emojis as characters instead. Stream
    * Chat can override this behavior by loading a custom web font that will render images instead (PNGs or SVGs depending on the platform).
    * Set this prop to true if you want to use these custom emojis for Windows users.
+   *
+   * Note: requires importing `stream-chat-react/css/v2/emoji-replacement.css` style sheet
    */
   useImageFlagEmojisOnWindows?: boolean;
-};
+} & Partial<Pick<MessageContextValue<StreamChatGenerics>, 'isMessageAIGenerated'>>;
 
 /**
  * Wrapper component for a StreamChat application. Chat needs to be placed around any other chat components
  * as it provides the ChatContext.
  */
 export const Chat = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: PropsWithChildren<ChatProps<At, Ch, Co, Ev, Me, Re, Us>>,
+  props: PropsWithChildren<ChatProps<StreamChatGenerics>>,
 ) => {
   const {
     children,
     client,
     customClasses,
-    customStyles,
-    darkMode = false,
     defaultLanguage,
     i18nInstance,
     initialNavOpen = true,
+    isMessageAIGenerated,
+    searchController: customChannelSearchController,
     theme = 'messaging light',
     useImageFlagEmojisOnWindows = false,
   } = props;
 
   const {
-    appSettings,
     channel,
     closeMobileNav,
+    getAppSettings,
+    latestMessageDatesByChannels,
     mutes,
     navOpen,
     openMobileNav,
@@ -103,17 +80,34 @@ export const Chat = <
     translators,
   } = useChat({ client, defaultLanguage, i18nInstance, initialNavOpen });
 
-  useCustomStyles(darkMode ? darkModeTheme : customStyles);
+  const channelsQueryState = useChannelsQueryState();
 
-  const chatContextValue = useCreateChatContext({
-    appSettings,
+  const searchController = useMemo(
+    () =>
+      customChannelSearchController ??
+      new SearchController<StreamChatGenerics>({
+        sources: [
+          new ChannelSearchSource<StreamChatGenerics>(client),
+          new UserSearchSource<StreamChatGenerics>(client),
+          new MessageSearchSource<StreamChatGenerics>(client),
+        ],
+      }),
+    [client, customChannelSearchController],
+  );
+
+  const chatContextValue = useCreateChatContext<StreamChatGenerics>({
     channel,
+    channelsQueryState,
     client,
     closeMobileNav,
     customClasses,
+    getAppSettings,
+    isMessageAIGenerated,
+    latestMessageDatesByChannels,
     mutes,
     navOpen,
     openMobileNav,
+    searchController,
     setActiveChannel,
     theme,
     useImageFlagEmojisOnWindows,

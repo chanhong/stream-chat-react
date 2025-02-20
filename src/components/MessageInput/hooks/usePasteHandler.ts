@@ -1,17 +1,18 @@
 import { useCallback } from 'react';
-import { dataTransferItemsHaveFiles, dataTransferItemsToFiles, FileLike } from 'react-file-utils';
+import { dataTransferItemsToFiles, FileLike } from '../../ReactFileUtilities';
+import type { EnrichURLsController } from './useLinkPreviews';
+import { SetLinkPreviewMode } from '../types';
 
 export const usePasteHandler = (
   uploadNewFiles: (files: FileList | FileLike[] | File[]) => void,
   insertText: (textToInsert: string) => void,
+  isUploadEnabled: boolean,
+  findAndEnqueueURLsToEnrich?: EnrichURLsController['findAndEnqueueURLsToEnrich'],
 ) => {
   const onPaste = useCallback(
     (clipboardEvent: React.ClipboardEvent<HTMLTextAreaElement>) => {
       (async (event) => {
-        // TODO: Move this handler to package with ImageDropzone
         const { items } = event.clipboardData;
-        if (!dataTransferItemsHaveFiles(Array.from(items))) return;
-
         event.preventDefault();
         // Get a promise for the plain text in case no files are
         // found. This needs to be done here because chrome cleans
@@ -30,19 +31,19 @@ export const usePasteHandler = (
         }
 
         const fileLikes = await dataTransferItemsToFiles(Array.from(items));
-        if (fileLikes.length) {
-          uploadNewFiles(fileLikes);
-          return;
-        }
 
-        // fallback to regular text paste
         if (plainTextPromise) {
           const pastedText = await plainTextPromise;
           insertText(pastedText);
+          findAndEnqueueURLsToEnrich?.(pastedText, SetLinkPreviewMode.UPSERT);
+          findAndEnqueueURLsToEnrich?.flush();
+        } else if (fileLikes.length && isUploadEnabled) {
+          uploadNewFiles(fileLikes);
+          return;
         }
       })(clipboardEvent);
     },
-    [insertText, uploadNewFiles],
+    [findAndEnqueueURLsToEnrich, insertText, isUploadEnabled, uploadNewFiles],
   );
 
   return { onPaste };

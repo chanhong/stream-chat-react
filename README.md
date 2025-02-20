@@ -8,7 +8,7 @@
 > building chat applications.
 
 [![NPM](https://img.shields.io/npm/v/stream-chat-react.svg)](https://www.npmjs.com/package/stream-chat-react)
-[![build](https://github.com/GetStream/stream-chat-react/workflows/test/badge.svg)](https://github.com/GetStream/stream-chat-react/actions)
+[![build](https://github.com/GetStream/stream-chat-react/actions/workflows/ci.yml/badge.svg)](https://github.com/GetStream/stream-chat-react/actions)
 [![Component Reference](https://img.shields.io/badge/docs-component%20reference-blue.svg)](https://getstream.io/chat/docs/sdk/react/)
 [![codecov](https://codecov.io/gh/GetStream/stream-chat-react/branch/master/graph/badge.svg)](https://codecov.io/gh/GetStream/stream-chat-react)
 
@@ -90,16 +90,16 @@ For components that implement significant logic, it's helpful to split the compo
 
 ### Customizing Styles
 
-The preferred method for overriding the pre-defined styles in the library is to two step process. First, import our bundled CSS into the file where you instantiate your chat application. Second, locate any Stream styles you want to override using either the browser inspector or by viewing the library code. You can then add selectors to your local CSS file to override our defaults. For example:
+The preferred method for overriding the pre-defined styles in the library is to two-step process. First, import our bundled CSS into the file where you instantiate your chat application. Second, locate any Stream styles you want to override using either the browser inspector or by viewing the library code. You can then add selectors to your local CSS file to override our defaults. For example:
 
 ```js
-import 'stream-chat-css/dist/css/index.css';
+import 'stream-chat-react/dist/css/v2/index.css';
 import './App.css';
 ```
 
 ## Internationalization
 
-Our library supports auto-translation for various user languages. Please read our internationalization [documentation](https://github.com/GetStream/stream-chat-react/wiki/Internationalization-(i18n)) for further details and setup guidance.
+Our library supports auto-translation for various user languages. Please read our internationalization [documentation](https://getstream.io/chat/docs/sdk/react/customization/translations/) for further details and setup guidance.
 
 ## Contributing
 
@@ -110,3 +110,13 @@ We recently closed a [$38 million Series B funding round](https://techcrunch.com
 Our APIs are used by more than a billion end-users, and by working at Stream, you have the chance to make a huge impact on a team of very strong engineers.
 
 Check out our current openings and apply via [Stream's website](https://getstream.io/team/#jobs).
+
+## Acknowledgements
+
+### Lamejs
+
+This project uses `lamejs` library under the LGPL license to convert the recorded audio to mp3 format.
+The library source code is dynamically imported and used only if audio recording is enabled.
+
+You can obtain the source code for `lamejs` from the [lamejs repository](https://github.com/gideonstele/lamejs) that is a fork of [the original JS library](https://github.com/zhuker/lamejs).
+You can find the source code for LAME at https://lame.sourceforge.net  and its license at: https://lame.sourceforge.net/license.txt

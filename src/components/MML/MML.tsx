@@ -5,6 +5,7 @@ import { useChatContext } from '../../context/ChatContext';
 import type { ActionHandlerReturnType } from '../Message/hooks/useActionHandler';
 
 const MMLReact = React.lazy(async () => {
+  // eslint-disable-next-line import/no-extraneous-dependencies
   const mml = await import('mml-react');
   return { default: mml.MML };
 });
@@ -21,7 +22,7 @@ export type MMLProps = {
 /**
  * A wrapper component around MML-React library
  */
-export const MML: React.FC<MMLProps> = (props) => {
+export const MML = (props: MMLProps) => {
   const { actionHandler, align = 'right', source } = props;
 
   const { theme } = useChatContext('MML');

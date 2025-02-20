@@ -1,37 +1,58 @@
-name: test
+name: Test
 
 on: [push]
+env:
+  NODE_OPTIONS: --max_old_space_size=4096
 
 jobs:
-  test:
+  tsc:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [10, 12, 14]
-        typescript: ['no']
-        include:
-          - typescript: 'yes'
+    name: Typescript
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2-beta
-        with:
-          node-version: ${{ matrix.node }}
+      - uses: actions/checkout@v3
 
-      - name: Cache Dependencies
-        uses: actions/cache@v2
+      - name: 💾 Cache Dependencies
+        uses: actions/cache@v3
         with:
           path: ./node_modules
           key: ${{ runner.os }}-${{ matrix.node }}-modules-${{ hashFiles('**/yarn.lock') }}
 
-      - name: Install Dependencies & Build
-        run: yarn install --frozen-lockfile --ignore-engines
+      - name: 🔨 Install Dependencies
+        run: yarn install --frozen-lockfile --ignore-engines --ignore-scripts
 
-      - name: Lint and Test with ${{ matrix.node }}
+      - name: 🧪 tsc
+        run: yarn types --noEmit
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [lts/*]
+    name: Test with Node ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 💾 Cache Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ./node_modules
+          key: ${{ runner.os }}-${{ matrix.node }}-modules-${{ hashFiles('**/yarn.lock') }}
+
+      - name: 🔨 Install Dependencies & Build
+        run: |
+          yarn install --frozen-lockfile --ignore-engines
+          yarn build
+
+      - name: 🧪 Lint and Test with ${{ matrix.node }}
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-          TYPESCRIPT: ${{ matrix.typescript }}
         run: |
-          if [ "$TYPESCRIPT" == "no" ]; then yarn lint; fi
-          if [ "$TYPESCRIPT" == "no" ]; then yarn coverage; fi
-          if [ "$TYPESCRIPT" == "no" ]; then yarn validate-translations; fi
-          if [ "$TYPESCRIPT" == "yes" ]; then yarn types; fi
+          yarn lint
+          yarn coverage
+          yarn validate-translations
+
+      - name: 🧪 Validate CommonJS bundle with ${{ matrix.node }}
+        run: yarn validate-cjs

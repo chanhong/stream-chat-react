@@ -1,6 +1,6 @@
-import React from 'react';
-import { cleanup } from '@testing-library/react';
-import renderer from 'react-test-renderer';
+import React, { act } from 'react';
+import { cleanup, render } from '@testing-library/react';
+
 import '@testing-library/jest-dom';
 
 import {
@@ -13,7 +13,7 @@ import {
   useMockedApis,
 } from '../../../mock-builders';
 
-import { usePrependedMessagesCount } from '../hooks/usePrependMessagesCount';
+import { usePrependedMessagesCount } from '../hooks';
 import { VirtualizedMessageList } from '../VirtualizedMessageList';
 
 import { Chat } from '../../Chat';
@@ -75,63 +75,81 @@ describe('VirtualizedMessageList', () => {
 
   it('should render the list without any message', async () => {
     const { channel, client } = await createChannel(true);
-    let tree;
-
-    function createNodeMock(element) {
-      if (element.type === 'div') {
-        return {
-          addEventListener() {},
-        };
-      }
-      return null;
-    }
-
-    await renderer.act(async () => {
-      tree = await renderer.create(
+    let result;
+    await act(() => {
+      result = render(
         <Chat client={client}>
           <Channel channel={channel}>
             <VirtualizedMessageList />
           </Channel>
         </Chat>,
-        {
-          createNodeMock,
-        },
       );
     });
-
-    expect(tree.toJSON()).toMatchSnapshot();
+    expect(result.container).toMatchSnapshot();
   });
 });
 
 describe('usePrependedMessagesCount', () => {
   const TestCase = ({ messages }) => {
     const prependCount = usePrependedMessagesCount(messages);
-    return <div>{prependCount}</div>;
+    return <div data-prepend-count={prependCount} id='prepend-counter' />;
   };
 
-  it('calculates the prepended messages using the id prop', async () => {
-    const render = await renderer.create(<TestCase messages={[]} />);
-    const expectPrependCount = (count) => {
-      expect(render.root.findByType('div').props.children).toStrictEqual(count);
-    };
+  const expectPrependCount = (count, container) => {
+    expect(container.querySelector('#prepend-counter')).toHaveAttribute(
+      'data-prepend-count',
+      count.toString(),
+    );
+  };
 
-    expectPrependCount(0);
+  it('determines 0 prepended messages for empty message list', async () => {
+    const { container } = await render(<TestCase messages={[]} />);
+    expectPrependCount(0, container);
+  });
 
-    await renderer.act(async () => {
-      await render.update(<TestCase messages={[{ id: 'a' }]} />);
-      expectPrependCount(0);
+  const messageBatch = (ids, status) => ids.map((id) => ({ id, status }));
+  const firstBatch = (status) => messageBatch(['a'], status);
+  const secondBatch = (status) => messageBatch(['c', 'b'], status);
+  const thirdBatch = (status) => messageBatch(['e', 'd'], status);
+
+  const testPrependCount = async (status, first, second, third) => {
+    const firstMessage = firstBatch(status);
+    const secondMsgBatch = secondBatch(status);
+    const thirdMsgBatch = thirdBatch(status);
+
+    const { container, rerender } = await render(<TestCase messages={[]} />);
+
+    await act(async () => {
+      await rerender(<TestCase messages={[...firstMessage]} />);
     });
+    expectPrependCount(first, container);
 
-    await renderer.act(async () => {
-      await render.update(<TestCase messages={[{ id: 'c' }, { id: 'b' }, { id: 'a' }]} />);
-      expectPrependCount(2);
+    await act(async () => {
+      await rerender(<TestCase messages={[...secondMsgBatch, ...firstMessage]} />);
     });
+    expectPrependCount(second, container);
 
-    await renderer.act(async () => {
-      await render.update(
-        <TestCase messages={[{ id: 'e' }, { id: 'd' }, { id: 'c' }, { id: 'b' }, { id: 'a' }]} />,
+    await act(async () => {
+      await rerender(
+        <TestCase messages={[...thirdMsgBatch, ...secondMsgBatch, ...firstMessage]} />,
       );
-      expectPrependCount(4);
     });
+    expectPrependCount(third, container);
+  };
+
+  it('calculates the prepended count for messages of status "received"', async () => {
+    await testPrependCount('received', 0, 2, 4);
+  });
+
+  it('ignores the messages of status "sending" from the prepended messages count', async () => {
+    await testPrependCount('sending', 0, 0, 0);
+  });
+
+  it('ignores the messages of status "failed" from the prepended messages count', async () => {
+    await testPrependCount('failed', 0, 0, 0);
+  });
+
+  it('calculates the prepended messages count for the messages of status undefined', async () => {
+    await testPrependCount(undefined, 0, 2, 4);
   });
 });

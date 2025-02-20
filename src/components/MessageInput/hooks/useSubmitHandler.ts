@@ -1,113 +1,67 @@
+import { useEffect, useRef } from 'react';
 import { useChannelActionContext } from '../../../context/ChannelActionContext';
 import { useChannelStateContext } from '../../../context/ChannelStateContext';
 import { useTranslationContext } from '../../../context/TranslationContext';
+import { LinkPreviewState } from '../types';
 
 import type { Attachment, Message, UpdatedMessage } from 'stream-chat';
 
-import type { MessageInputReducerAction, MessageInputState } from './useMessageInputState';
+import type {
+  MessageInputReducerAction,
+  MessageInputState,
+} from './useMessageInputState';
 import type { MessageInputProps } from '../MessageInput';
 
 import type {
   CustomTrigger,
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
+  DefaultStreamChatGenerics,
+  SendMessageOptions,
 } from '../../../types/types';
-
-const getAttachmentTypeFromMime = (mime: string) => {
-  if (mime.includes('video/')) return 'video';
-  if (mime.includes('audio/')) return 'audio';
-  return 'file';
-};
+import type { EnrichURLsController } from './useLinkPreviews';
 
 export const useSubmitHandler = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType,
-  V extends CustomTrigger = CustomTrigger
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
 >(
-  props: MessageInputProps<At, Ch, Co, Ev, Me, Re, Us, V>,
-  state: MessageInputState<At, Us>,
-  dispatch: React.Dispatch<MessageInputReducerAction<Us>>,
+  props: MessageInputProps<StreamChatGenerics, V>,
+  state: MessageInputState<StreamChatGenerics>,
+  dispatch: React.Dispatch<MessageInputReducerAction<StreamChatGenerics>>,
   numberOfUploads: number,
+  enrichURLsController: EnrichURLsController,
 ) => {
-  const { clearEditingState, message, overrideSubmitHandler, parent, publishTypingEvent } = props;
-
   const {
-    attachments,
-    fileOrder,
-    fileUploads,
-    imageOrder,
-    imageUploads,
-    mentioned_users,
-    text,
-  } = state;
+    clearEditingState,
+    message,
+    overrideSubmitHandler,
+    parent,
+    publishTypingEvent,
+  } = props;
 
-  const { channel } = useChannelStateContext<At, Ch, Co, Ev, Me, Re, Us>('useSubmitHandler');
-  const { addNotification, editMessage, sendMessage } = useChannelActionContext<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >('useSubmitHandler');
+  const { attachments, linkPreviews, mentioned_users, text } = state;
+
+  const { cancelURLEnrichment, findAndEnqueueURLsToEnrich } = enrichURLsController;
+  const { channel } = useChannelStateContext<StreamChatGenerics>('useSubmitHandler');
+  const { addNotification, editMessage, sendMessage } =
+    useChannelActionContext<StreamChatGenerics>('useSubmitHandler');
   const { t } = useTranslationContext('useSubmitHandler');
 
-  const getAttachmentsFromUploads = () => {
-    const imageAttachments = imageOrder
-      .map((id) => imageUploads[id])
-      .filter((upload) => upload.state !== 'failed')
-      .filter((
-        { id, url },
-        _,
-        self, // filter out duplicates based on url
-      ) => self.every((upload) => upload.id === id || upload.url !== url))
-      .map(
-        (upload) =>
-          ({
-            fallback: upload.file.name,
-            image_url: upload.url,
-            type: 'image',
-          } as Attachment<At>),
-      );
+  const textReference = useRef({ hasChanged: false, initialText: text });
 
-    const fileAttachments = fileOrder
-      .map((id) => fileUploads[id])
-      .filter((upload) => upload.state !== 'failed')
-      .map(
-        (upload) =>
-          ({
-            asset_url: upload.url,
-            file_size: upload.file.size,
-            mime_type: upload.file.type,
-            title: upload.file.name,
-            type: getAttachmentTypeFromMime(upload.file.type || ''),
-          } as Attachment<At>),
-      );
+  useEffect(() => {
+    if (!textReference.current.initialText.length) {
+      textReference.current.initialText = text;
+      return;
+    }
 
-    return [
-      ...attachments, // from state
-      ...imageAttachments,
-      ...fileAttachments,
-    ];
-  };
+    textReference.current.hasChanged = text !== textReference.current.initialText;
+  }, [text]);
 
   const handleSubmit = async (
-    event: React.BaseSyntheticEvent,
-    customMessageData?: Partial<Message<At, Me, Us>>,
+    event?: React.BaseSyntheticEvent,
+    customMessageData?: Partial<Message<StreamChatGenerics>>,
+    options?: SendMessageOptions,
   ) => {
-    event.preventDefault();
-
+    event?.preventDefault();
     const trimmedMessage = text.trim();
     const isEmptyMessage =
       trimmedMessage === '' ||
@@ -119,18 +73,71 @@ export const useSubmitHandler = <
       trimmedMessage === '__' ||
       trimmedMessage === '****';
 
-    if (isEmptyMessage && numberOfUploads === 0) return;
-
-    // the channel component handles the actual sending of the message
-    const someAttachmentsUploading =
-      Object.values(imageUploads).some((upload) => upload.state === 'uploading') ||
-      Object.values(fileUploads).some((upload) => upload.state === 'uploading');
+    if (
+      isEmptyMessage &&
+      numberOfUploads === 0 &&
+      attachments.length === 0 &&
+      !customMessageData?.poll_id
+    )
+      return;
+    const someAttachmentsUploading = attachments.some(
+      (att) => att.localMetadata?.uploadState === 'uploading',
+    );
 
     if (someAttachmentsUploading) {
       return addNotification(t('Wait until all attachments have uploaded'), 'error');
     }
 
-    const newAttachments = getAttachmentsFromUploads();
+    const attachmentsFromUploads = attachments
+      .filter(
+        (att) =>
+          att.localMetadata?.uploadState !== 'failed' ||
+          (findAndEnqueueURLsToEnrich && !att.og_scrape_url), // filter out all the attachments scraped before the message was edited
+      )
+      .map((localAttachment) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { localMetadata: _, ...attachment } = localAttachment;
+        return attachment as Attachment;
+      });
+
+    const sendOptions = { ...options };
+    let attachmentsFromLinkPreviews: Attachment[] = [];
+    if (findAndEnqueueURLsToEnrich) {
+      // prevent showing link preview in MessageInput after the message has been sent
+      cancelURLEnrichment();
+      const someLinkPreviewsLoading = Array.from(linkPreviews.values()).some(
+        (linkPreview) =>
+          [LinkPreviewState.QUEUED, LinkPreviewState.LOADING].includes(linkPreview.state),
+      );
+      const someLinkPreviewsDismissed = Array.from(linkPreviews.values()).some(
+        (linkPreview) => linkPreview.state === LinkPreviewState.DISMISSED,
+      );
+
+      attachmentsFromLinkPreviews = someLinkPreviewsLoading
+        ? []
+        : Array.from(linkPreviews.values())
+            .filter(
+              (linkPreview) =>
+                linkPreview.state === LinkPreviewState.LOADED &&
+                !attachmentsFromUploads.find(
+                  (attFromUpload) =>
+                    attFromUpload.og_scrape_url === linkPreview.og_scrape_url,
+                ),
+            )
+
+            .map(
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              ({ state: linkPreviewState, ...ogAttachment }) =>
+                ogAttachment as Attachment,
+            );
+
+      // scraped attachments are added only if all enrich queries has completed. Otherwise, the scraping has to be done server-side.
+      sendOptions.skip_enrich_url =
+        (!someLinkPreviewsLoading && attachmentsFromLinkPreviews.length > 0) ||
+        someLinkPreviewsDismissed;
+    }
+
+    const newAttachments = [...attachmentsFromUploads, ...attachmentsFromLinkPreviews];
 
     // Instead of checking if a user is still mentioned every time the text changes,
     // just filter out non-mentioned users before submit, which is cheaper
@@ -149,16 +156,20 @@ export const useSubmitHandler = <
       text,
     };
 
-    if (message) {
+    if (message && message.type !== 'error') {
       delete message.i18n;
 
       try {
-        await editMessage(({
-          ...message,
-          ...updatedMessage,
-        } as unknown) as UpdatedMessage<At, Ch, Co, Me, Re, Us>);
+        await editMessage(
+          {
+            ...message,
+            ...updatedMessage,
+            ...customMessageData,
+          } as unknown as UpdatedMessage<StreamChatGenerics>,
+          sendOptions,
+        );
 
-        if (clearEditingState) clearEditingState();
+        clearEditingState?.();
         dispatch({ type: 'clear' });
       } catch (err) {
         addNotification(t('Edit message request failed'), 'error');
@@ -168,12 +179,14 @@ export const useSubmitHandler = <
         dispatch({ type: 'clear' });
 
         if (overrideSubmitHandler) {
-          overrideSubmitHandler(
+          await overrideSubmitHandler(
             {
               ...updatedMessage,
               parent,
             },
             channel.cid,
+            customMessageData,
+            sendOptions,
           );
         } else {
           await sendMessage(
@@ -182,6 +195,7 @@ export const useSubmitHandler = <
               parent,
             },
             customMessageData,
+            sendOptions,
           );
         }
 
@@ -192,11 +206,9 @@ export const useSubmitHandler = <
           type: 'setText',
         });
 
-        if (actualMentionedUsers.length) {
-          actualMentionedUsers.forEach((user) => {
-            dispatch({ type: 'addMentionedUser', user });
-          });
-        }
+        actualMentionedUsers?.forEach((user) => {
+          dispatch({ type: 'addMentionedUser', user });
+        });
 
         addNotification(t('Send message request failed'), 'error');
       }

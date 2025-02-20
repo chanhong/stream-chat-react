@@ -9,13 +9,18 @@
  */
 export const useMockedApis = (client, apiResponses) => {
   apiResponses.forEach(({ response, type }) => {
-    jest.spyOn(client.axiosInstance, type).mockImplementation().mockResolvedValue(response);
+    jest
+      .spyOn(client.axiosInstance, type)
+      .mockImplementation()
+      .mockResolvedValue(response);
   });
 };
 
 export * from './queryChannels';
 export * from './queryMembers';
+export * from './queryUsers';
 export * from './getOrCreateChannel';
+export * from './markRead';
 export * from './threadReplies';
 export * from './sendMessage';
 export * from './error';

@@ -1,0 +1,95 @@
+{
+  "branches": [
+    {
+      "name": "master",
+      "channel": "latest"
+    },
+    {
+      "name": "release-v12",
+      "channel": "latest"
+    },
+    {
+      "name": "release-v11",
+      "channel": "v11",
+      "range": "11.x"
+    },
+    {
+      "name": "release-v10",
+      "channel": "v10",
+      "range": "10.x"
+    },
+    {
+      "name": "release-v9",
+      "channel": "v9",
+      "range": "9.x"
+    }
+  ],
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "angular",
+        "releaseRules": [
+          { "type": "chore", "scope": "deps", "release": "patch" },
+          { "type": "refactor", "release": "patch" }
+        ]
+      }
+    ],
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        "preset": "conventionalcommits",
+        "presetConfig": {
+          "types": [
+            {
+              "type": "fix",
+              "section": "Bug Fixes",
+              "hidden": false
+            },
+            {
+              "type": "feat",
+              "section": "Features",
+              "hidden": false
+            },
+            {
+              "type": "chore",
+              "scope": "deps",
+              "section": "Chores",
+              "hidden": false
+            },
+            {
+              "type": "refactor",
+              "section": "Refactors",
+              "hidden": false
+            },
+            {
+              "type": "perf",
+              "section": "Performance Improvements",
+              "hidden": false
+            }
+          ]
+        }
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "NEXT_VERSION=${nextRelease.version} npm run build"
+      }
+    ],
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "./CHANGELOG.md"
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["./CHANGELOG.md"]
+      }
+    ],
+    "@semantic-release/github",
+    "@semantic-release/npm"
+  ]
+}

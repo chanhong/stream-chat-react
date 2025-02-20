@@ -1,4 +1,7 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { PropsWithChildren, useEffect, useRef } from 'react';
+import type { PaginatorProps } from '../../types/types';
+import { deprecationAndReplacementWarning } from '../../utils/deprecationWarning';
+import { DEFAULT_LOAD_PAGE_SCROLL_THRESHOLD } from '../../constants/limits';
 
 /**
  * Prevents Chrome hangups
@@ -10,112 +13,156 @@ const mousewheelListener = (event: Event) => {
   }
 };
 
-const calculateTopPosition = (element: HTMLElement | Element | null): number => {
-  if (element instanceof HTMLElement) {
-    return element.offsetTop + calculateTopPosition(element.offsetParent);
-  }
-  return 0;
+export type InfiniteScrollProps = PaginatorProps & {
+  className?: string;
+  element?: React.ElementType;
+  /**
+   * @desc Flag signalling whether more pages with older items can be loaded
+   * @deprecated Use hasPreviousPage prop instead. Planned for removal: https://github.com/GetStream/stream-chat-react/issues/1804
+   */
+  hasMore?: boolean;
+  /**
+   * @desc Flag signalling whether more pages with newer items can be loaded
+   * @deprecated Use hasNextPage prop instead. Planned for removal: https://github.com/GetStream/stream-chat-react/issues/1804
+   */
+  hasMoreNewer?: boolean;
+  /** Element to be rendered at the top of the thread message list. By default, Message and ThreadStart components */
+  head?: React.ReactNode;
+  initialLoad?: boolean;
+  isLoading?: boolean;
+  listenToScroll?: (offset: number, reverseOffset: number, threshold: number) => void;
+  loader?: React.ReactNode;
+  /**
+   * @desc Function that loads previous page with older items
+   * @deprecated Use loadPreviousPage prop instead. Planned for removal: https://github.com/GetStream/stream-chat-react/issues/1804
+   */
+  loadMore?: () => void;
+  /**
+   * @desc Function that loads next page with newer items
+   * @deprecated Use loadNextPage prop instead. Planned for removal: https://github.com/GetStream/stream-chat-react/issues/1804
+   */
+  loadMoreNewer?: () => void;
+  useCapture?: boolean;
 };
 
 /**
- * Computes by recursively summing offsetTop until an element without offsetParent is reached
+ * This component serves a single purpose - load more items on scroll inside the MessageList component
+ * It is not a general purpose infinite scroll controller, because:
+ * 1. It is re-rendered whenever queryInProgress, hasNext, hasPrev changes. This can lead to scrollListener to have stale data.
+ * 2. It pretends to invoke scrollListener on resize event even though this event is emitted only on window resize. It should
+ * rather use ResizeObserver. But then again, it ResizeObserver would invoke a stale version of scrollListener.
+ *
+ * In general, the infinite scroll controller should not aim for checking the loading state and whether there is more data to load.
+ * That should be controlled by the loading function.
  */
-const calculateOffset = (element: HTMLElement, scrollTop: number) => {
-  if (!element) {
-    return 0;
-  }
-
-  return calculateTopPosition(element) + (element.offsetHeight - scrollTop - window.innerHeight);
-};
-
-export type InfiniteScrollProps = {
-  className?: string;
-  element?: React.ElementType;
-  hasMore?: boolean;
-  initialLoad?: boolean;
-  isLoading?: boolean;
-  isReverse?: boolean;
-  listenToScroll?: (offset: number, reverseOffset: number, threshold: number) => void;
-  loader?: React.ReactNode;
-  loading?: React.ReactNode;
-  loadMore?: () => void;
-  pageStart?: number;
-  threshold?: number;
-  useCapture?: boolean;
-  useWindow?: boolean;
-};
-
-export const InfiniteScroll: React.FC<InfiniteScrollProps> = (props) => {
+export const InfiniteScroll = (props: PropsWithChildren<InfiniteScrollProps>) => {
   const {
     children,
     element = 'div',
-    hasMore = false,
+    hasMore,
+    hasMoreNewer,
+    hasNextPage,
+    hasPreviousPage,
+    head,
     initialLoad = true,
-    isLoading = false,
-    isReverse = false,
+    isLoading,
     listenToScroll,
     loader,
     loadMore,
-    threshold = 250,
+    loadMoreNewer,
+    loadNextPage,
+    loadPreviousPage,
+    threshold = DEFAULT_LOAD_PAGE_SCROLL_THRESHOLD,
     useCapture = false,
-    useWindow = true,
     ...elementProps
   } = props;
 
-  const scrollComponent = useRef<HTMLElement>();
+  const loadNextPageFn = loadNextPage || loadMoreNewer;
+  const loadPreviousPageFn = loadPreviousPage || loadMore;
+  const hasNextPageFlag = hasNextPage || hasMoreNewer;
+  const hasPreviousPageFlag = hasPreviousPage || hasMore;
 
-  const scrollListener = useCallback(() => {
+  const scrollComponent = useRef<HTMLElement>(undefined);
+  const previousOffset = useRef<number | undefined>(undefined);
+  const previousReverseOffset = useRef<number | undefined>(undefined);
+
+  const scrollListenerRef = useRef<() => void>(undefined);
+  scrollListenerRef.current = () => {
     const element = scrollComponent.current;
-    if (!element) return;
-    const { parentElement } = element;
 
-    let offset = 0;
-    let reverseOffset = 0;
-    if (useWindow) {
-      const doc = document.documentElement || document.body.parentNode || document.body;
-      const scrollTop = window.pageYOffset !== undefined ? window.pageYOffset : doc.scrollTop;
-      offset = calculateOffset(element, scrollTop);
-      reverseOffset = scrollTop;
-    } else if (parentElement) {
-      offset = element.scrollHeight - parentElement.scrollTop - parentElement.clientHeight;
-      reverseOffset = parentElement.scrollTop;
+    if (!element || element.offsetParent === null) {
+      return;
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const parentElement = element.parentElement!;
+
+    const offset =
+      element.scrollHeight - parentElement.scrollTop - parentElement.clientHeight;
+    const reverseOffset = parentElement.scrollTop;
+
     if (listenToScroll) {
       listenToScroll(offset, reverseOffset, threshold);
     }
 
-    // Here we make sure the element is visible as well as checking the offset
+    if (isLoading) return;
     if (
-      (isReverse ? reverseOffset : offset) < Number(threshold) &&
-      element.offsetParent !== null &&
-      typeof loadMore === 'function' &&
-      hasMore
+      previousOffset.current === offset &&
+      previousReverseOffset.current === reverseOffset
+    )
+      return;
+    previousOffset.current = offset;
+    previousReverseOffset.current = reverseOffset;
+
+    // FIXME: this triggers loadMore call when a user types messages in thread and the scroll container expands
+    if (
+      reverseOffset < Number(threshold) &&
+      typeof loadPreviousPageFn === 'function' &&
+      hasPreviousPageFlag
     ) {
-      loadMore();
+      loadPreviousPageFn();
     }
-  }, [hasMore, useWindow, isReverse, threshold, listenToScroll, loadMore]);
+
+    if (
+      offset < Number(threshold) &&
+      typeof loadNextPageFn === 'function' &&
+      hasNextPageFlag
+    ) {
+      loadNextPageFn();
+    }
+  };
 
   useEffect(() => {
-    const scrollElement = useWindow ? window : scrollComponent.current?.parentNode;
-    if (isLoading || !scrollElement) {
-      return () => undefined;
-    }
+    deprecationAndReplacementWarning(
+      [
+        [{ hasMoreNewer }, { hasNextPage }],
+        [{ loadMoreNewer }, { loadNextPage }],
+        [{ hasMore }, { hasPreviousPage }],
+        [{ loadMore }, { loadPreviousPage }],
+      ],
+      'InfiniteScroll',
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const scrollElement = scrollComponent.current?.parentNode;
+    if (!scrollElement) return;
+
+    const scrollListener = () => scrollListenerRef.current?.();
 
     scrollElement.addEventListener('scroll', scrollListener, useCapture);
     scrollElement.addEventListener('resize', scrollListener, useCapture);
-
-    if (initialLoad) {
-      scrollListener();
-    }
+    scrollListener();
 
     return () => {
       scrollElement.removeEventListener('scroll', scrollListener, useCapture);
       scrollElement.removeEventListener('resize', scrollListener, useCapture);
     };
-  }, [initialLoad, isLoading, scrollListener, useCapture, useWindow]);
+  }, [initialLoad, useCapture]);
 
   useEffect(() => {
-    const scrollElement = useWindow ? window : scrollComponent.current?.parentNode;
+    const scrollElement = scrollComponent.current?.parentNode;
     if (scrollElement) {
       scrollElement.addEventListener('wheel', mousewheelListener, { passive: false });
     }
@@ -124,7 +171,7 @@ export const InfiniteScroll: React.FC<InfiniteScrollProps> = (props) => {
         scrollElement.removeEventListener('wheel', mousewheelListener, useCapture);
       }
     };
-  }, [useCapture, useWindow]);
+  }, [useCapture]);
 
   const attributes = {
     ...elementProps,
@@ -133,13 +180,11 @@ export const InfiniteScroll: React.FC<InfiniteScrollProps> = (props) => {
     },
   };
 
-  const childrenArray = [children];
-  if (isLoading && loader) {
-    if (isReverse) {
-      childrenArray.unshift(loader);
-    } else {
-      childrenArray.push(loader);
-    }
+  const childrenArray = [loader, children];
+
+  if (head) {
+    childrenArray.unshift(head);
   }
+
   return React.createElement(element, attributes, childrenArray);
 };

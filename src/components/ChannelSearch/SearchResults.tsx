@@ -1,52 +1,67 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { PropsWithChildren, useCallback, useEffect, useState } from 'react';
+import clsx from 'clsx';
 
+import { SearchIcon } from './icons';
+import { ChannelPreview } from '../ChannelPreview';
 import { ChannelOrUserResponse, isChannel } from './utils';
+import { Avatar } from '../Avatar';
 
-import { Avatar } from '../Avatar/Avatar';
-import { useBreakpoint } from '../Message/hooks/useBreakpoint';
+import { useTranslationContext } from '../../context';
 
-import { useTranslationContext } from '../../context/TranslationContext';
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+const DefaultSearchEmpty = () => {
+  const { t } = useTranslationContext('SearchResults');
+  return (
+    <div aria-live='polite' className='str-chat__channel-search-container-empty'>
+      <SearchIcon />
+      {t<string>('No results found')}
+    </div>
+  );
+};
 
-export type DropdownContainerProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
-  results: ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>[];
-  SearchResultItem: React.ComponentType<SearchResultItemProps<At, Ch, Co, Ev, Me, Re, Us>>;
-  selectResult: (result: ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>) => Promise<void> | void;
+export type SearchResultsHeaderProps<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = Pick<SearchResultsProps<StreamChatGenerics>, 'results'>;
+
+const DefaultSearchResultsHeader = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>({
+  results,
+}: SearchResultsHeaderProps<StreamChatGenerics>) => {
+  const { t } = useTranslationContext('SearchResultsHeader');
+  return (
+    <div
+      className='str-chat__channel-search-results-header'
+      data-testid='channel-search-results-header'
+    >
+      {t<string>('searchResultsCount', {
+        count: results.length,
+      })}
+    </div>
+  );
+};
+
+export type SearchResultsListProps<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = Required<
+  Pick<
+    SearchResultsProps<StreamChatGenerics>,
+    'results' | 'SearchResultItem' | 'selectResult'
+  >
+> & {
   focusedUser?: number;
 };
 
-const DefaultDropdownContainer = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+const DefaultSearchResultsList = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: DropdownContainerProps<At, Ch, Co, Ev, Me, Re, Us>,
+  props: SearchResultsListProps<StreamChatGenerics>,
 ) => {
-  const { focusedUser, results, SearchResultItem = DefaultSearchResultItem, selectResult } = props;
+  const { focusedUser, results, SearchResultItem, selectResult } = props;
 
   return (
-    <div>
+    <>
       {results.map((result, index) => (
         <SearchResultItem
           focusedUser={focusedUser}
@@ -56,131 +71,147 @@ const DefaultDropdownContainer = <
           selectResult={selectResult}
         />
       ))}
-    </div>
+    </>
   );
 };
 
+// fixme: index and focusedUser should be changed for className with default value "str-chat__channel-search-result--focused"
 export type SearchResultItemProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = Pick<SearchResultsProps<StreamChatGenerics>, 'selectResult'> & {
   index: number;
-  result: ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>;
-  selectResult: (result: ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>) => Promise<void> | void;
+  result: ChannelOrUserResponse<StreamChatGenerics>;
   focusedUser?: number;
 };
 
 const DefaultSearchResultItem = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: SearchResultItemProps<At, Ch, Co, Ev, Me, Re, Us>,
+  props: SearchResultItemProps<StreamChatGenerics>,
 ) => {
   const { focusedUser, index, result, selectResult } = props;
-
   const focused = focusedUser === index;
+
+  const className = clsx(
+    'str-chat__channel-search-result',
+    focused && 'str-chat__channel-search-result--focused',
+  );
 
   if (isChannel(result)) {
     const channel = result;
 
     return (
-      <div
-        className={`str-chat__channel-search-result ${focused ? 'focused' : ''}`}
-        onClick={() => selectResult(channel)}
-      >
-        <div className='result-hashtag'>#</div>
-        <p className='channel-search__result-text'>{channel.data?.name}</p>
-      </div>
+      <ChannelPreview
+        channel={channel}
+        className={className}
+        onSelect={() => selectResult(channel)}
+      />
     );
   } else {
     return (
-      <div
-        className={`str-chat__channel-search-result ${focused ? 'focused' : ''}`}
+      <button
+        aria-label={`Select User Channel: ${result.name || ''}`}
+        className={className}
+        data-testid='channel-search-result-user'
         onClick={() => selectResult(result)}
+        role='option'
       >
-        <Avatar image={result.image} user={result} />
-        {result.name || result.id}
-      </div>
+        <Avatar
+          className='str-chat__avatar--channel-preview'
+          image={result.image}
+          name={result.name || result.id}
+          user={result}
+        />
+        <div className='str-chat__channel-search-result--display-name'>
+          {result.name || result.id}
+        </div>
+      </button>
     );
   }
 };
 
-export type SearchResultsProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
-  results: Array<ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>> | [];
-  searching: boolean;
-  selectResult: (result: ChannelOrUserResponse<At, Ch, Co, Ev, Me, Re, Us>) => Promise<void> | void;
-  DropdownContainer?: React.ComponentType<DropdownContainerProps<At, Ch, Co, Ev, Me, Re, Us>>;
-  popupResults?: boolean;
-  SearchEmpty?: React.ComponentType;
-  SearchLoading?: React.ComponentType;
-  SearchResultItem?: React.ComponentType<SearchResultItemProps<At, Ch, Co, Ev, Me, Re, Us>>;
-  SearchResultsHeader?: React.ComponentType;
+const ResultsContainer = ({
+  children,
+  popupResults,
+}: PropsWithChildren<{ popupResults?: boolean }>) => {
+  const { t } = useTranslationContext('ResultsContainer');
+
+  return (
+    <div
+      aria-label={t('aria/Channel search results')}
+      className={clsx(
+        `str-chat__channel-search-result-list`,
+        popupResults ? 'popup' : 'inline',
+      )}
+    >
+      {children}
+    </div>
+  );
 };
 
+export type SearchResultsController<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = {
+  results: Array<ChannelOrUserResponse<StreamChatGenerics>>;
+  searching: boolean;
+  selectResult: (
+    result: ChannelOrUserResponse<StreamChatGenerics>,
+  ) => Promise<void> | void;
+};
+
+export type AdditionalSearchResultsProps<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = {
+  /** Display search results as an absolutely positioned popup, defaults to false and shows inline */
+  popupResults?: boolean;
+  /** Custom UI component to display empty search results */
+  SearchEmpty?: React.ComponentType;
+  /** Custom UI component to display the search loading state */
+  SearchLoading?: React.ComponentType;
+  /** Custom UI component to display a search result list item, defaults to and accepts the same props as: [DefaultSearchResultItem](https://github.com/GetStream/stream-chat-react/blob/master/src/components/ChannelSearch/SearchResults.tsx) */
+  SearchResultItem?: React.ComponentType<SearchResultItemProps<StreamChatGenerics>>;
+  /** Custom UI component to display the search results header */
+  SearchResultsHeader?: React.ComponentType;
+  /** Custom UI component to display all the search results, defaults to and accepts the same props as: [DefaultSearchResultsList](https://github.com/GetStream/stream-chat-react/blob/master/src/components/ChannelSearch/SearchResults.tsx)  */
+  SearchResultsList?: React.ComponentType<SearchResultsListProps<StreamChatGenerics>>;
+};
+
+export type SearchResultsProps<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = AdditionalSearchResultsProps<StreamChatGenerics> &
+  SearchResultsController<StreamChatGenerics>;
+
 export const SearchResults = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: SearchResultsProps<At, Ch, Co, Ev, Me, Re, Us>,
+  props: SearchResultsProps<StreamChatGenerics>,
 ) => {
   const {
-    DropdownContainer = DefaultDropdownContainer,
     popupResults,
     results,
+    SearchEmpty = DefaultSearchEmpty,
     searching,
-    SearchEmpty,
-    SearchResultsHeader,
     SearchLoading,
     SearchResultItem = DefaultSearchResultItem,
+    SearchResultsHeader = DefaultSearchResultsHeader,
+    SearchResultsList = DefaultSearchResultsList,
     selectResult,
   } = props;
 
   const { t } = useTranslationContext('SearchResults');
-
-  const [focusedUser, setFocusedUser] = useState<number>();
-
-  const { device } = useBreakpoint();
-
-  const containerStyle = popupResults && device === 'full' ? 'popup' : 'inline';
-
-  const ResultsContainer: React.FC = ({ children }) => (
-    <div className={`str-chat__channel-search-container ${containerStyle}`}>{children}</div>
-  );
+  const [focusedResult, setFocusedResult] = useState<number>();
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
       if (event.key === 'ArrowUp') {
-        setFocusedUser((prevFocused) => {
+        setFocusedResult((prevFocused) => {
           if (prevFocused === undefined) return 0;
           return prevFocused === 0 ? results.length - 1 : prevFocused - 1;
         });
       }
 
       if (event.key === 'ArrowDown') {
-        setFocusedUser((prevFocused) => {
+        setFocusedResult((prevFocused) => {
           if (prevFocused === undefined) return 0;
           return prevFocused === results.length - 1 ? 0 : prevFocused + 1;
         });
@@ -188,13 +219,16 @@ export const SearchResults = <
 
       if (event.key === 'Enter') {
         event.preventDefault();
-        if (focusedUser !== undefined) {
-          selectResult(results[focusedUser]);
-          return setFocusedUser(undefined);
-        }
+        setFocusedResult((prevFocused) => {
+          if (typeof prevFocused !== 'undefined') {
+            selectResult(results[prevFocused]);
+            return undefined;
+          }
+          return prevFocused;
+        });
       }
     },
-    [focusedUser],
+    [results, selectResult],
   );
 
   useEffect(() => {
@@ -204,11 +238,16 @@ export const SearchResults = <
 
   if (searching) {
     return (
-      <ResultsContainer>
+      <ResultsContainer popupResults={popupResults}>
         {SearchLoading ? (
           <SearchLoading />
         ) : (
-          <div className='str-chat__channel-search-container-searching'>{t('Searching...')}</div>
+          <div
+            className='str-chat__channel-search-container-searching'
+            data-testid='search-in-progress-indicator'
+          >
+            {t<string>('Searching...')}
+          </div>
         )}
       </ResultsContainer>
     );
@@ -216,21 +255,17 @@ export const SearchResults = <
 
   if (!results.length) {
     return (
-      <ResultsContainer>
-        {SearchEmpty ? (
-          <SearchEmpty />
-        ) : (
-          <div className='str-chat__channel-search-container-empty'>{t('No results found')}</div>
-        )}
+      <ResultsContainer popupResults={popupResults}>
+        <SearchEmpty />
       </ResultsContainer>
     );
   }
 
   return (
-    <ResultsContainer>
-      {SearchResultsHeader && <SearchResultsHeader />}
-      <DropdownContainer
-        focusedUser={focusedUser}
+    <ResultsContainer popupResults={popupResults}>
+      <SearchResultsHeader results={results} />
+      <SearchResultsList
+        focusedUser={focusedResult}
         results={results}
         SearchResultItem={SearchResultItem}
         selectResult={selectResult}

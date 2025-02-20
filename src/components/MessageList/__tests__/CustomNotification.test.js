@@ -1,31 +1,33 @@
-/* eslint-disable jest-dom/prefer-to-have-class */
 import React from 'react';
-import renderer from 'react-test-renderer';
+
 import { cleanup, render } from '@testing-library/react';
-// import '@testing-library/jest-dom';
+import '@testing-library/jest-dom';
 
 import { CustomNotification } from '../CustomNotification';
 
-afterEach(cleanup); // eslint-disable-line
+afterEach(cleanup);
 
 describe('CustomNotification', () => {
   it('should render nothing if active is false', () => {
-    const tree = renderer
-      .create(<CustomNotification active={false}>test</CustomNotification>)
-      .toJSON();
-    expect(tree).toMatchInlineSnapshot(`null`);
+    const { container } = render(
+      <CustomNotification active={false}>test</CustomNotification>,
+    );
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('should render children when active', () => {
-    const tree = renderer
-      .create(<CustomNotification active={true}>children</CustomNotification>)
-      .toJSON();
-    expect(tree).toMatchInlineSnapshot(`
-      <div
-        className="str-chat__custom-notification notification-undefined"
-        data-testid="custom-notification"
-      >
-        children
+    const { container } = render(
+      <CustomNotification active={true}>children</CustomNotification>,
+    );
+    expect(container).toMatchInlineSnapshot(`
+      <div>
+        <div
+          aria-live="polite"
+          class="str-chat__custom-notification notification-undefined str-chat__notification str-chat-react__notification"
+          data-testid="custom-notification"
+        >
+          children
+        </div>
       </div>
     `);
   });
@@ -39,6 +41,18 @@ describe('CustomNotification', () => {
       </CustomNotification>,
     );
 
-    expect(getByTestId('custom-notification').className).toContain(`notification-${type}`);
+    expect(getByTestId('custom-notification')).toHaveClass(`notification-${type}`);
+  });
+
+  it('should add custom class to className', () => {
+    const className = 'custom-classname-xxx';
+
+    const { getByTestId } = render(
+      <CustomNotification active={true} className={className}>
+        x
+      </CustomNotification>,
+    );
+
+    expect(getByTestId('custom-notification')).toHaveClass(className);
   });
 });

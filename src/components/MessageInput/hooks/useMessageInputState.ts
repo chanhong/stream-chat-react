@@ -1,81 +1,53 @@
 import React, { Reducer, useCallback, useReducer, useState } from 'react';
+import { nanoid } from 'nanoid';
 
-import { StreamMessage, useChannelStateContext } from '../../../context/ChannelStateContext';
-import { generateRandomId } from '../../../utils';
+import {
+  StreamMessage,
+  useChannelStateContext,
+} from '../../../context/ChannelStateContext';
 
-import { useEmojiIndex } from './useEmojiIndex';
 import { useAttachments } from './useAttachments';
+import { EnrichURLsController, useLinkPreviews } from './useLinkPreviews';
 import { useMessageInputText } from './useMessageInputText';
-import { useEmojiPicker } from './useEmojiPicker';
 import { useSubmitHandler } from './useSubmitHandler';
 import { usePasteHandler } from './usePasteHandler';
-
-import type { EmojiData, NimbleEmojiIndex } from 'emoji-mart';
-import type { FileLike } from 'react-file-utils';
-import type { Attachment, Message, UserResponse } from 'stream-chat';
+import {
+  RecordingController,
+  useMediaRecorder,
+} from '../../MediaRecorder/hooks/useMediaRecorder';
+import type { LinkPreviewMap, LocalAttachment } from '../types';
+import { LinkPreviewState, SetLinkPreviewMode } from '../types';
+import type { Attachment, Message, OGAttachment, UserResponse } from 'stream-chat';
 
 import type { MessageInputProps } from '../MessageInput';
 
 import type {
   CustomTrigger,
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
+  DefaultStreamChatGenerics,
+  SendMessageOptions,
 } from '../../../types/types';
-
-export type FileUpload = {
-  file: {
-    name: string;
-    lastModified?: number;
-    lastModifiedDate?: Date;
-    size?: number;
-    type?: string;
-    uri?: string;
-  };
-  id: string;
-  state: 'finished' | 'failed' | 'uploading';
-  url?: string;
-};
-
-export type ImageUpload = {
-  file: {
-    name: string;
-    height?: number;
-    lastModified?: number;
-    lastModifiedDate?: Date;
-    size?: number;
-    type?: string;
-    uri?: string;
-    width?: number;
-  };
-  id: string;
-  state: 'finished' | 'failed' | 'uploading';
-  previewUri?: string;
-  url?: string;
-};
+import { mergeDeep } from '../../../utils/mergeDeep';
 
 export type MessageInputState<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 > = {
-  attachments: Attachment<At>[];
-  emojiPickerIsOpen: boolean;
-  fileOrder: string[];
-  fileUploads: { [id: string]: FileUpload };
-  imageOrder: string[];
-  imageUploads: { [id: string]: ImageUpload };
-  mentioned_users: UserResponse<Us>[];
+  attachments: LocalAttachment<StreamChatGenerics>[];
+  linkPreviews: LinkPreviewMap;
+  mentioned_users: UserResponse<StreamChatGenerics>[];
   setText: (text: string) => void;
   text: string;
 };
 
-type SetEmojiPickerIsOpenAction = {
-  type: 'setEmojiPickerIsOpen';
-  value: boolean;
+type UpsertAttachmentsAction<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = {
+  attachments: LocalAttachment<StreamChatGenerics>[];
+  type: 'upsertAttachments';
+};
+
+type RemoveAttachmentsAction = {
+  ids: string[];
+  type: 'removeAttachments';
 };
 
 type SetTextAction = {
@@ -87,159 +59,107 @@ type ClearAction = {
   type: 'clear';
 };
 
-type SetImageUploadAction = {
-  id: string;
-  type: 'setImageUpload';
-  file?: File | FileLike;
-  previewUri?: string;
-  state?: string;
-  url?: string;
+type SetLinkPreviewsAction = {
+  linkPreviews: LinkPreviewMap;
+  mode: SetLinkPreviewMode;
+  type: 'setLinkPreviews';
 };
 
-type SetFileUploadAction = {
-  id: string;
-  type: 'setFileUpload';
-  file?: File;
-  state?: string;
-  url?: string;
-};
-
-type RemoveImageUploadAction = {
-  id: string;
-  type: 'removeImageUpload';
-};
-
-type RemoveFileUploadAction = {
-  id: string;
-  type: 'removeFileUpload';
-};
-
-type AddMentionedUserAction<Us extends DefaultUserType<Us> = DefaultUserType> = {
+type AddMentionedUserAction<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = {
   type: 'addMentionedUser';
-  user: UserResponse<Us>;
+  user: UserResponse<StreamChatGenerics>;
 };
 
-export type MessageInputReducerAction<Us extends DefaultUserType<Us> = DefaultUserType> =
-  | SetEmojiPickerIsOpenAction
+export type MessageInputReducerAction<
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> =
   | SetTextAction
   | ClearAction
-  | SetImageUploadAction
-  | SetFileUploadAction
-  | RemoveImageUploadAction
-  | RemoveFileUploadAction
-  | AddMentionedUserAction<Us>;
+  | SetLinkPreviewsAction
+  | AddMentionedUserAction<StreamChatGenerics>
+  | UpsertAttachmentsAction
+  | RemoveAttachmentsAction;
 
 export type MessageInputHookProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Us extends DefaultUserType<Us> = DefaultUserType
-> = {
-  closeEmojiPicker: React.MouseEventHandler<HTMLElement>;
-  emojiPickerRef: React.MutableRefObject<HTMLDivElement | null>;
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+> = EnrichURLsController & {
   handleChange: React.ChangeEventHandler<HTMLTextAreaElement>;
-  handleEmojiKeyDown: React.KeyboardEventHandler<HTMLSpanElement>;
   handleSubmit: (
-    event: React.BaseSyntheticEvent,
-    customMessageData?: Partial<Message<At, Me, Us>>,
+    event?: React.BaseSyntheticEvent,
+    customMessageData?: Partial<Message<StreamChatGenerics>>,
+    options?: SendMessageOptions,
   ) => void;
   insertText: (textToInsert: string) => void;
   isUploadEnabled: boolean;
   maxFilesLeft: number;
   numberOfUploads: number;
   onPaste: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
-  onSelectEmoji: (emoji: EmojiData) => void;
-  onSelectUser: (item: UserResponse<Us>) => void;
-  openEmojiPicker: React.MouseEventHandler<HTMLSpanElement>;
-  removeFile: (id: string) => void;
-  removeImage: (id: string) => void;
-  textareaRef: React.MutableRefObject<HTMLTextAreaElement | undefined>;
-  uploadFile: (id: string) => void;
-  uploadImage: (id: string) => void;
+  onSelectUser: (item: UserResponse<StreamChatGenerics>) => void;
+  recordingController: RecordingController<StreamChatGenerics>;
+  removeAttachments: (ids: string[]) => void;
+  textareaRef: React.MutableRefObject<HTMLTextAreaElement | null | undefined>;
+  uploadAttachment: (
+    attachment: LocalAttachment<StreamChatGenerics>,
+  ) => Promise<LocalAttachment<StreamChatGenerics> | undefined>;
   uploadNewFiles: (files: FileList | File[]) => void;
-  emojiIndex?: NimbleEmojiIndex;
+  upsertAttachments: (
+    attachments: (Attachment<StreamChatGenerics> | LocalAttachment<StreamChatGenerics>)[],
+  ) => void;
 };
-const emptyFileUploads: Record<string, FileUpload> = {};
-const emptyImageUploads: Record<string, ImageUpload> = {};
+
+const makeEmptyMessageInputState = <
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+>(): MessageInputState<StreamChatGenerics> => ({
+  attachments: [],
+  linkPreviews: new Map(),
+  mentioned_users: [],
+  setText: () => null,
+  text: '',
+});
 
 /**
  * Initializes the state. Empty if the message prop is falsy.
  */
 const initState = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  message?: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>,
-): MessageInputState<At, Us> => {
+  message?: Pick<
+    StreamMessage<StreamChatGenerics>,
+    'attachments' | 'mentioned_users' | 'text'
+  >,
+): MessageInputState<StreamChatGenerics> => {
   if (!message) {
-    return {
-      attachments: [],
-      emojiPickerIsOpen: false,
-      fileOrder: [],
-      fileUploads: { ...emptyFileUploads },
-      imageOrder: [],
-      imageUploads: { ...emptyImageUploads },
-      mentioned_users: [],
-      setText: () => null,
-      text: '',
-    };
+    return makeEmptyMessageInputState();
   }
 
-  // if message prop is defined, get image uploads, file uploads, text, etc.
-  const imageUploads =
-    message.attachments
-      ?.filter(({ type }) => type === 'image')
-      .reduce((acc, attachment) => {
-        const id = generateRandomId();
-        acc[id] = {
-          file: {
-            name: attachment.fallback || '',
-          },
-          id,
-          state: 'finished',
-          url: attachment.image_url,
-        };
-        return acc;
-      }, {} as Record<string, ImageUpload>) || {};
-
-  const imageOrder = Object.keys(imageUploads);
-
-  const fileUploads =
-    message.attachments
-      ?.filter(({ type }) => type === 'file')
-      .reduce((acc, attachment) => {
-        const id = generateRandomId();
-        acc[id] = {
-          file: {
-            name: attachment.title || '',
-            size: attachment.file_size,
-            type: attachment.mime_type,
-          },
-          id,
-          state: 'finished',
-          url: attachment.asset_url,
-        };
-        return acc;
-      }, {} as Record<string, FileUpload>) || {};
-
-  const fileOrder = Object.keys(fileUploads);
+  const linkPreviews =
+    message.attachments?.reduce<LinkPreviewMap>((acc, attachment) => {
+      if (!attachment.og_scrape_url) return acc;
+      acc.set(attachment.og_scrape_url, {
+        ...(attachment as OGAttachment),
+        state: LinkPreviewState.LOADED,
+      });
+      return acc;
+    }, new Map()) ?? new Map();
 
   const attachments =
-    message.attachments?.filter(({ type }) => type !== 'file' && type !== 'image') || [];
+    message.attachments
+      ?.filter(({ og_scrape_url }) => !og_scrape_url)
+      .map(
+        (att) =>
+          ({
+            ...att,
+            localMetadata: { id: nanoid() },
+          }) as LocalAttachment<StreamChatGenerics>,
+      ) || [];
 
-  const mentioned_users = message.mentioned_users || [];
+  const mentioned_users: StreamMessage['mentioned_users'] = message.mentioned_users || [];
 
   return {
     attachments,
-    emojiPickerIsOpen: false,
-    fileOrder,
-    fileUploads,
-    imageOrder,
-    imageUploads,
+    linkPreviews,
     mentioned_users,
     setText: () => null,
     text: message.text || '',
@@ -250,82 +170,85 @@ const initState = <
  * MessageInput state reducer
  */
 const messageInputReducer = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  state: MessageInputState<At, Us>,
-  action: MessageInputReducerAction<Us>,
+  state: MessageInputState<StreamChatGenerics>,
+  action: MessageInputReducerAction<StreamChatGenerics>,
 ) => {
   switch (action.type) {
-    case 'setEmojiPickerIsOpen':
-      return { ...state, emojiPickerIsOpen: action.value };
-
     case 'setText':
       return { ...state, text: action.getNewText(state.text) };
 
     case 'clear':
-      return {
-        attachments: [],
-        emojiPickerIsOpen: false,
-        fileOrder: [],
-        fileUploads: { ...emptyFileUploads },
-        imageOrder: [],
-        imageUploads: { ...emptyImageUploads },
-        mentioned_users: [],
-        text: '',
-      };
+      return makeEmptyMessageInputState();
 
-    case 'setImageUpload': {
-      const imageAlreadyExists = state.imageUploads[action.id];
-      if (!imageAlreadyExists && !action.file) return state;
-      const imageOrder = imageAlreadyExists ? state.imageOrder : state.imageOrder.concat(action.id);
-      const newUploadFields = { ...action } as Partial<SetImageUploadAction>;
-      delete newUploadFields.type;
+    case 'upsertAttachments': {
+      const attachments = [...state.attachments];
+      action.attachments.forEach((actionAttachment) => {
+        const attachmentIndex = state.attachments.findIndex(
+          (att) =>
+            att.localMetadata?.id &&
+            att.localMetadata?.id === actionAttachment.localMetadata?.id,
+        );
+
+        if (attachmentIndex === -1) {
+          attachments.push(actionAttachment);
+        } else {
+          const upsertedAttachment = mergeDeep(
+            state.attachments[attachmentIndex] ?? {},
+            actionAttachment,
+          );
+          attachments.splice(attachmentIndex, 1, upsertedAttachment);
+        }
+      });
+
       return {
         ...state,
-        imageOrder,
-        imageUploads: {
-          ...state.imageUploads,
-          [action.id]: { ...state.imageUploads[action.id], ...newUploadFields },
-        },
-      };
-    }
-
-    case 'setFileUpload': {
-      const fileAlreadyExists = state.fileUploads[action.id];
-      if (!fileAlreadyExists && !action.file) return state;
-      const fileOrder = fileAlreadyExists ? state.fileOrder : state.fileOrder.concat(action.id);
-      const newUploadFields = { ...action } as Partial<SetFileUploadAction>;
-      delete newUploadFields.type;
-      return {
-        ...state,
-        fileOrder,
-        fileUploads: {
-          ...state.fileUploads,
-          [action.id]: { ...state.fileUploads[action.id], ...newUploadFields },
-        },
+        attachments,
       };
     }
 
-    case 'removeImageUpload': {
-      if (!state.imageUploads[action.id]) return state; // cannot remove anything
-      const newImageUploads = { ...state.imageUploads };
-      delete newImageUploads[action.id];
+    case 'removeAttachments': {
       return {
         ...state,
-        imageOrder: state.imageOrder.filter((_id) => _id !== action.id),
-        imageUploads: newImageUploads,
+        attachments: state.attachments.filter(
+          (att) => !action.ids.includes(att.localMetadata?.id),
+        ),
       };
     }
 
-    case 'removeFileUpload': {
-      if (!state.fileUploads[action.id]) return state; // cannot remove anything
-      const newFileUploads = { ...state.fileUploads };
-      delete newFileUploads[action.id];
+    case 'setLinkPreviews': {
+      const linkPreviews = new Map(state.linkPreviews);
+
+      if (action.mode === SetLinkPreviewMode.REMOVE) {
+        Array.from(action.linkPreviews.keys()).forEach((key) => {
+          linkPreviews.delete(key);
+        });
+      } else {
+        Array.from(action.linkPreviews.values()).reduce<LinkPreviewMap>(
+          (acc, linkPreview) => {
+            const existingPreview = acc.get(linkPreview.og_scrape_url);
+            const alreadyEnqueued =
+              linkPreview.state === LinkPreviewState.QUEUED &&
+              existingPreview?.state !== LinkPreviewState.FAILED;
+
+            if (existingPreview && alreadyEnqueued) return acc;
+            acc.set(linkPreview.og_scrape_url, linkPreview);
+            return acc;
+          },
+          linkPreviews,
+        );
+
+        if (action.mode === SetLinkPreviewMode.SET) {
+          Array.from(state.linkPreviews.keys()).forEach((key) => {
+            if (!action.linkPreviews.get(key)) linkPreviews.delete(key);
+          });
+        }
+      }
+
       return {
         ...state,
-        fileOrder: state.fileOrder.filter((_id) => _id !== action.id),
-        fileUploads: newFileUploads,
+        linkPreviews,
       };
     }
 
@@ -356,48 +279,59 @@ export type MentionsListState = {
  * hook for MessageInput state
  */
 export const useMessageInputState = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType,
-  V extends CustomTrigger = CustomTrigger
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
+  V extends CustomTrigger = CustomTrigger,
 >(
-  props: MessageInputProps<At, Ch, Co, Ev, Me, Re, Us, V>,
-): MessageInputState<At, Us> &
-  MessageInputHookProps<At, Me, Us> &
+  props: MessageInputProps<StreamChatGenerics, V>,
+): MessageInputState<StreamChatGenerics> &
+  MessageInputHookProps<StreamChatGenerics> &
   CommandsListState &
   MentionsListState => {
-  const { message } = props;
+  const {
+    additionalTextareaProps,
+    asyncMessagesMultiSendEnabled,
+    audioRecordingConfig,
+    audioRecordingEnabled,
+    getDefaultValue,
+    message,
+    urlEnrichmentConfig,
+  } = props;
 
-  const { channelCapabilities = {}, channelConfig } = useChannelStateContext<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us
-  >('useMessageInputState');
+  const {
+    channelCapabilities = {},
+    enrichURLForPreview: enrichURLForPreviewChannelContext,
+  } = useChannelStateContext<StreamChatGenerics>('useMessageInputState');
+
+  const defaultValue = getDefaultValue?.() || additionalTextareaProps?.defaultValue;
+  const initialStateValue =
+    message ||
+    ((Array.isArray(defaultValue)
+      ? { text: defaultValue.join('') }
+      : { text: defaultValue?.toString() }) as Partial<
+      StreamMessage<StreamChatGenerics>
+    >);
 
   const [state, dispatch] = useReducer(
-    messageInputReducer as Reducer<MessageInputState<At, Us>, MessageInputReducerAction<Us>>,
-    message,
+    messageInputReducer as Reducer<
+      MessageInputState<StreamChatGenerics>,
+      MessageInputReducerAction<StreamChatGenerics>
+    >,
+    initialStateValue,
     initState,
   );
 
+  const enrichURLsController = useLinkPreviews({
+    dispatch,
+    linkPreviews: state.linkPreviews,
+    ...urlEnrichmentConfig,
+    enrichURLForPreview:
+      urlEnrichmentConfig?.enrichURLForPreview ?? enrichURLForPreviewChannelContext,
+  });
+
   const { handleChange, insertText, textareaRef } = useMessageInputText<
-    At,
-    Ch,
-    Co,
-    Ev,
-    Me,
-    Re,
-    Us,
+    StreamChatGenerics,
     V
-  >(props, state, dispatch);
+  >(props, state, dispatch, enrichURLsController.findAndEnqueueURLsToEnrich);
 
   const [showCommandsList, setShowCommandsList] = useState(false);
   const [showMentionsList, setShowMentionsList] = useState(false);
@@ -414,7 +348,7 @@ export const useMessageInputState = <
 
   const openMentionsList = () => {
     dispatch({
-      getNewText: () => '@',
+      getNewText: (currentText) => currentText + '@',
       type: 'setText',
     });
     setShowMentionsList(true);
@@ -423,36 +357,39 @@ export const useMessageInputState = <
   const closeMentionsList = () => setShowMentionsList(false);
 
   const {
-    closeEmojiPicker,
-    emojiPickerRef,
-    handleEmojiKeyDown,
-    onSelectEmoji,
-    openEmojiPicker,
-  } = useEmojiPicker<At, Us>(state, dispatch, insertText);
-
-  const {
     maxFilesLeft,
     numberOfUploads,
-    removeFile,
-    removeImage,
-    uploadFile,
-    uploadImage,
+    removeAttachments,
+    uploadAttachment,
     uploadNewFiles,
-  } = useAttachments<At, Ch, Co, Ev, Me, Re, Us, V>(props, state, dispatch);
+    upsertAttachments,
+  } = useAttachments<StreamChatGenerics, V>(props, state, dispatch, textareaRef);
 
-  const { handleSubmit } = useSubmitHandler<At, Ch, Co, Ev, Me, Re, Us, V>(
+  const { handleSubmit } = useSubmitHandler<StreamChatGenerics, V>(
     props,
     state,
     dispatch,
     numberOfUploads,
+    enrichURLsController,
+  );
+  const recordingController = useMediaRecorder({
+    asyncMessagesMultiSendEnabled,
+    enabled: !!audioRecordingEnabled,
+    handleSubmit,
+    recordingConfig: audioRecordingConfig,
+    uploadAttachment,
+  });
+
+  const isUploadEnabled = !!channelCapabilities['upload-file'];
+
+  const { onPaste } = usePasteHandler(
+    uploadNewFiles,
+    insertText,
+    isUploadEnabled,
+    enrichURLsController.findAndEnqueueURLsToEnrich,
   );
 
-  const { onPaste } = usePasteHandler(uploadNewFiles, insertText);
-
-  const isUploadEnabled =
-    channelConfig?.uploads !== false && channelCapabilities['upload-file'] !== false;
-
-  const onSelectUser = useCallback((item: UserResponse<Us>) => {
+  const onSelectUser = useCallback((item: UserResponse<StreamChatGenerics>) => {
     dispatch({ type: 'addMentionedUser', user: item });
   }, []);
 
@@ -462,36 +399,27 @@ export const useMessageInputState = <
 
   return {
     ...state,
+    ...enrichURLsController,
     closeCommandsList,
-    /**
-     * TODO: fix the below at some point because this type casting is wrong
-     * and just forced to not have warnings currently with the unknown casting
-     */
-    closeEmojiPicker: (closeEmojiPicker as unknown) as React.MouseEventHandler<HTMLSpanElement>,
     closeMentionsList,
-    emojiIndex: useEmojiIndex(),
-    emojiPickerRef,
     handleChange,
-    handleEmojiKeyDown,
     handleSubmit,
     insertText,
     isUploadEnabled,
     maxFilesLeft,
     numberOfUploads,
     onPaste,
-    onSelectEmoji,
     onSelectUser,
     openCommandsList,
-    openEmojiPicker,
     openMentionsList,
-    removeFile,
-    removeImage,
+    recordingController,
+    removeAttachments,
     setText,
     showCommandsList,
     showMentionsList,
     textareaRef,
-    uploadFile,
-    uploadImage,
+    uploadAttachment,
     uploadNewFiles,
+    upsertAttachments,
   };
 };

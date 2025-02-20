@@ -1,63 +1,70 @@
 import { useMemo } from 'react';
 
 import type { ChatContextValue } from '../../../context/ChatContext';
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../../types/types';
+import type { DefaultStreamChatGenerics } from '../../../types/types';
 
 export const useCreateChatContext = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  value: ChatContextValue<At, Ch, Co, Ev, Me, Re, Us>,
+  value: ChatContextValue<StreamChatGenerics>,
 ) => {
   const {
-    appSettings,
     channel,
+    channelsQueryState,
     client,
     closeMobileNav,
     customClasses,
+    getAppSettings,
+    isMessageAIGenerated,
+    latestMessageDatesByChannels,
     mutes,
     navOpen,
     openMobileNav,
+    searchController,
     setActiveChannel,
     theme,
     useImageFlagEmojisOnWindows,
   } = value;
 
   const channelCid = channel?.cid;
+  const channelsQueryError = channelsQueryState.error;
+  const channelsQueryInProgress = channelsQueryState.queryInProgress;
   const clientValues = `${client.clientID}${Object.keys(client.activeChannels).length}${
     Object.keys(client.listeners).length
   }${client.mutedChannels.length}
   ${client.user?.id}`;
   const mutedUsersLength = mutes.length;
 
-  const chatContext: ChatContextValue<At, Ch, Co, Ev, Me, Re, Us> = useMemo(
+  const chatContext: ChatContextValue<StreamChatGenerics> = useMemo(
     () => ({
-      appSettings,
       channel,
+      channelsQueryState,
       client,
       closeMobileNav,
       customClasses,
+      getAppSettings,
+      isMessageAIGenerated,
+      latestMessageDatesByChannels,
       mutes,
       navOpen,
       openMobileNav,
+      searchController,
       setActiveChannel,
       theme,
       useImageFlagEmojisOnWindows,
     }),
-    [channelCid, clientValues, mutedUsersLength, navOpen],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      channelCid,
+      channelsQueryError,
+      channelsQueryInProgress,
+      clientValues,
+      getAppSettings,
+      searchController,
+      mutedUsersLength,
+      navOpen,
+      isMessageAIGenerated,
+    ],
   );
 
   return chatContext;

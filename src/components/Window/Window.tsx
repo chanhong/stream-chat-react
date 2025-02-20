@@ -1,50 +1,35 @@
 import React, { PropsWithChildren } from 'react';
+import clsx from 'clsx';
 
 import { StreamMessage, useChannelStateContext } from '../../context/ChannelStateContext';
 
-import type {
-  DefaultAttachmentType,
-  DefaultChannelType,
-  DefaultCommandType,
-  DefaultEventType,
-  DefaultMessageType,
-  DefaultReactionType,
-  DefaultUserType,
-} from '../../types/types';
+import type { DefaultStreamChatGenerics } from '../../types/types';
 
 export type WindowProps<
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Ev extends DefaultEventType = DefaultEventType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 > = {
-  /** show or hide the window when a thread is active */
-  hideOnThread?: boolean;
-  /** optional prop to manually trigger the opening of a thread*/
-  thread?: StreamMessage<At, Ch, Co, Ev, Me, Re, Us>;
+  /** optional prop to force addition of class str-chat__main-panel---with-thread-opn to the Window root element */
+  thread?: StreamMessage<StreamChatGenerics>;
 };
 
 const UnMemoizedWindow = <
-  At extends DefaultAttachmentType = DefaultAttachmentType,
-  Ch extends DefaultChannelType = DefaultChannelType,
-  Co extends DefaultCommandType = DefaultCommandType,
-  Me extends DefaultMessageType = DefaultMessageType,
-  Re extends DefaultReactionType = DefaultReactionType,
-  Us extends DefaultUserType<Us> = DefaultUserType
+  StreamChatGenerics extends DefaultStreamChatGenerics = DefaultStreamChatGenerics,
 >(
-  props: PropsWithChildren<WindowProps<At, Ch, Co, Me, Re, Us>>,
+  props: PropsWithChildren<WindowProps<StreamChatGenerics>>,
 ) => {
-  const { children, hideOnThread = false } = props;
+  const { children, thread: propThread } = props;
 
-  const { thread } = useChannelStateContext<At, Ch, Co, Me, Re, Us>('Window');
+  const { thread: contextThread } = useChannelStateContext<StreamChatGenerics>('Window');
 
-  // If thread is active and window should hide on thread. Return null
-  if (thread && hideOnThread) return null;
-
-  return <div className={`str-chat__main-panel`}>{children}</div>;
+  return (
+    <div
+      className={clsx('str-chat__main-panel', {
+        'str-chat__main-panel--thread-open': contextThread || propThread,
+      })}
+    >
+      {children}
+    </div>
+  );
 };
 
 /**
